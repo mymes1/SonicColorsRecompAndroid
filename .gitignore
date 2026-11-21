@@ -90,3 +90,7 @@ CTestTestfile.cmake
 # OS
 .DS_Store
 Thumbs.db
+
+# Android local tooling
+/android/.gradle/
+/android/local.properties

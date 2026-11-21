@@ -1,0 +1,149 @@
+name: Android launcher preview APK
+on:
+  workflow_dispatch:
+    inputs:
+      prepare_game:
+        description: 'Recompile owned disc into a private, non-playable APK'
+        type: boolean
+        default: false
+        required: true
+  push:
+    paths: ['android/**', 'runtime/platform/android/**', 'runtime/cpu/**', '.github/workflows/android-apk.yml']
+  pull_request:
+    paths: ['android/**', 'runtime/platform/android/**', 'runtime/cpu/**', '.github/workflows/android-apk.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android native build dependencies
+        run: sdkmanager 'platforms;android-35' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Test disc preparation helper
+        run: python3 -m unittest discover -s android/ci -p "test_*.py"
+      - name: Build preview APK
+        working-directory: android
+        run: gradle --no-daemon assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sonic-colors-android-launcher-preview
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+  emulator-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android native build dependencies
+        run: sdkmanager 'platforms;android-35' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run launcher and native instrumentation tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: cd android && gradle --no-daemon connectedDebugAndroidTest
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-launcher-test-reports
+          path: android/app/build/reports/androidTests/
+          if-no-files-found: warn
+  game-apk:
+    if: github.event_name == 'workflow_dispatch' && inputs.prepare_game
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Require a private repository for game-derived artifacts
+        if: github.event.repository.private != true
+        run: |
+          echo 'Use a private repository: this APK contains game-derived code.' >&2
+          exit 1
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake g++ python3
+          sdkmanager 'platforms;android-35' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Download and validate owned disc
+        env:
+          DISC_URL: ${{ secrets.DISC_URL }}
+          DISC_SHA256: ${{ secrets.DISC_SHA256 }}
+        run: python3 android/ci/download_disc.py "$RUNNER_TEMP/scr-disc"
+      - name: Build host disc installer
+        run: |
+          cmake -S android/ci/installer -B "$RUNNER_TEMP/scr-installer" -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/scr-installer" --parallel 2
+      - name: Extract supported game and generate recompilation sources
+        run: |
+          "$RUNNER_TEMP/scr-installer/scr_install" "$RUNNER_TEMP/scr-disc/disc.iso"
+          python3 tools/build_generated.py
+      - name: Compile and link generated PPC sources into APK
+        working-directory: android
+        run: gradle --no-daemon --max-workers 2 -PcompileGenerated=true assembleDebug
+      - name: Verify both native libraries are packaged
+        run: |
+          python3 - <<'PYCODE'
+          import zipfile
+          with zipfile.ZipFile('android/app/build/outputs/apk/debug/app-debug.apk') as apk:
+              names = set(apk.namelist())
+              for abi in ('arm64-v8a', 'x86_64'):
+                  name = f'lib/{abi}/libscr_recomp_code.so'
+                  if name not in names:
+                      raise SystemExit(f'Missing {name}')
+          PYCODE
+      - name: Enable KVM for recompiled APK test
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Test recompiled-code library on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: cd android && gradle --no-daemon --max-workers 2 -PcompileGenerated=true connectedDebugAndroidTest
+      - name: Upload private code-bearing APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonic-colors-android-recompiled-code-preview
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 1
+      - name: Clean private game data
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/scr-disc" game generated

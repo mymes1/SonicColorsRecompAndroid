@@ -4,6 +4,8 @@ Native **Linux and Windows** static recompilation of **Sonic Colors (Wii)** — 
 
 You must own the game. No disc image or assets are shipped in this repository or in published builds.
 
+**Android:** An unplayable launcher preview and debug APK workflow are available in [`android/`](android/README.md). The native Android game runtime is not yet implemented.
+
 [![Get it on RecompLauncher](https://recomplauncher.com/badge/get-it-on-recomplauncher.svg)](https://recomplauncher.com)
 
 ## How to play
