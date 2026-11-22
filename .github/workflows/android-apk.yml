@@ -58,6 +58,10 @@ jobs:
           # an add_library failure sits on the lines after that.
           grep -n -A6 -E "CMake Error" "$log" | head -40 | cut -c1-400 \
             | while IFS= read -r line; do echo "::error::$line"; done
+          # A compiler or linker diagnostic is only useful with the lines around it: which target
+          # failed, and what the symbol was. -B4 keeps that context, one annotation per block.
+          grep -n -B4 -A6 -E "^e: |error:|ld.lld: error|What went wrong|Caused by:" "$log" | head -120 | cut -c1-400 \
+            | while IFS= read -r line; do echo "::error::$line"; done
           grep -m8 -E "^e: |error:|What went wrong|Caused by:|FAILURE: Build" "$log" \
             | cut -c1-300 | while IFS= read -r line; do echo "::error::$line"; done
           tail -n 30 "$log" | tr '\n' '|' | cut -c1-4000 | sed 's/^/::error::last lines: /'
