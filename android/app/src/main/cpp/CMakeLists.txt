@@ -208,8 +208,12 @@ if(SCR_RUNTIME_ARCH_OK)
     # configure step with a clear message instead of the link.
     find_library(SCR_VULKAN_LIB vulkan REQUIRED)
     find_library(SCR_AAUDIO_LIB aaudio REQUIRED)
+    # shaderc: renderer_vk.cpp compiles the generated GLSL at run time. The NDK ships both the
+    # headers (sources/third_party/shaderc/include) and the library, but the include directory is
+    # only added by linking the library, so this replaces the desktop build's external/ copy.
+    find_library(SCR_SHADERC_LIB shaderc REQUIRED)
     target_link_libraries(scr_runtime PRIVATE
-        android log jnigraphics ${SCR_VULKAN_LIB} ${SCR_AAUDIO_LIB})
+        android log jnigraphics ${SCR_VULKAN_LIB} ${SCR_AAUDIO_LIB} ${SCR_SHADERC_LIB})
 endif()   # SCR_RUNTIME_ARCH_OK
 
 # ---------------------------------------------------------------- recompiled guest code
