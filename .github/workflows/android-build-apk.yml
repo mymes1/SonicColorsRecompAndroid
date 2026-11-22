@@ -69,11 +69,11 @@ jobs:
           if [ "$url" = "${INPUT_URL:-}" ]; then echo "Disc link: the workflow input."; else echo "Disc link: the DISC_URL secret."; fi
           if [ -n "$sha" ]; then echo "Digest: pinned."; else echo "Digest: not pinned, the download is hashed and reported."; fi
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
       - name: Install build tools
         run: |
           sudo apt-get update
