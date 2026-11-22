@@ -76,4 +76,4 @@ for abi in $ABIS; do
         exit 1
     fi
 done
-echo "build_shaderc: done"
+echo "build_shaderc: done, $libs/$abi (NDK $ndk)"

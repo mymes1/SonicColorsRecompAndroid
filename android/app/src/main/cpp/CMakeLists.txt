@@ -214,25 +214,65 @@ if(SCR_RUNTIME_ARCH_OK)
     # once per NDK with ndk-build, which puts .a files under sources/third_party/shaderc/libs.
     # android/ci/build_shaderc.sh does exactly that. NDK r27 deleted the sources entirely, which is
     # why the NDK is pinned to r26.
-    set(SCR_NDK_SHADERC "${ANDROID_NDK}/sources/third_party/shaderc")
-    find_library(SCR_SHADERC_LIB shaderc PATHS "${SCR_NDK_SHADERC}/libs/${ANDROID_STL}/${ANDROID_ABI}"
-                 NO_DEFAULT_PATH)
+    # The STL directory differs between the script's ndk-build and Gradle's CMake ("c++_static",
+    # "c++_shared", or a clang-suffixed name), and ANDROID_NDK and the script's choice of NDK are
+    # not guaranteed to be the same install, so every plausible copy is considered, under whichever
+    # NDK this configure step knows about and under the SDK's ndk/ directory.
+    get_filename_component(SCR_SDK_ROOT "${ANDROID_NDK}" DIRECTORY)
+    set(SCR_SHADERC_ROOTS "${ANDROID_NDK}/sources/third_party/shaderc")
+    # SCR_SDK_ROOT is already the SDK's ndk/ directory, since SCR_SDK_ROOT comes from the NDK path.
+    file(GLOB SCR_SDK_NDKS LIST_DIRECTORIES true "${SCR_SDK_ROOT}/*")
+    foreach(ndk_dir IN LISTS SCR_SDK_NDKS)
+        list(APPEND SCR_SHADERC_ROOTS "${ndk_dir}/sources/third_party/shaderc")
+    endforeach()
+    # libs/<stl>/<abi>/libshaderc.a: glob rather than guess the STL directory name.
+    set(SCR_SHADERC_LIB "")
+    set(SCR_SHADERC_INCLUDE "")
+    foreach(root IN LISTS SCR_SHADERC_ROOTS)
+        file(GLOB candidates "${root}/libs/*/${ANDROID_ABI}/libshaderc*.a")
+        if(candidates AND NOT SCR_SHADERC_LIB)
+            list(GET candidates 0 SCR_SHADERC_LIB)
+        endif()
+        if(NOT SCR_SHADERC_INCLUDE AND IS_DIRECTORY "${root}/include/shaderc")
+            set(SCR_SHADERC_INCLUDE "${root}/include")
+        endif()
+    endforeach()
     if(NOT SCR_SHADERC_LIB)
-        find_library(SCR_SHADERC_LIB shaderc)
+        # An externally built copy, or one installed where the compiler searches.
+        find_library(SCR_SHADERC_LIB NAMES shaderc libshaderc)
     endif()
-    if(NOT SCR_SHADERC_LIB)
-        find_path(SCR_SHADERC_INCLUDE shaderc/shaderc.h HINTS "${SCR_NDK_SHADERC}/include")
+    if(NOT SCR_SHADERC_INCLUDE)
+        find_path(SCR_SHADERC_INCLUDE NAMES shaderc/shaderc.h)
     endif()
     if(NOT SCR_SHADERC_LIB AND NOT SCR_SHADERC_INCLUDE)
+        # Listing what is there turns "missing" into a fact about this machine: which NDKs were
+        # searched, and whether the build produced anything for this ABI.
+        string(REPLACE ";" "\n  " SCR_SHADERC_ROOTS_TEXT "${SCR_SHADERC_ROOTS}")
+        set(SCR_SHADERC_FOUND_TEXT "")
+        foreach(root IN LISTS SCR_SHADERC_ROOTS)
+            if(IS_DIRECTORY "${root}")
+                file(GLOB built LIST_DIRECTORIES false "${root}/libs/*/*/libshaderc*.a")
+                if(built)
+                    string(REPLACE ";" "\n  " built_text "${built}")
+                else()
+                    set(built_text "(nothing built under libs/)")
+                endif()
+                string(APPEND SCR_SHADERC_FOUND_TEXT "\n  ${root}:\n  ${built_text}")
+            else()
+                string(APPEND SCR_SHADERC_FOUND_TEXT "\n  ${root}: (no such NDK sources)")
+            endif()
+        endforeach()
         message(FATAL_ERROR
-            "shaderc is missing for ${ANDROID_ABI}. The Vulkan renderer compiles its generated "
-            "GLSL with shaderc at run time, and the NDK does not ship it prebuilt: build it once "
-            "with\n"
+            "shaderc is missing for ${ANDROID_ABI} (CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}, "
+            "ANDROID_NDK=${ANDROID_NDK}, ANDROID_STL=${ANDROID_STL}).\n"
+            "The Vulkan renderer compiles its generated GLSL with shaderc at run time, and the "
+            "NDK does not ship it prebuilt: build it once with\n"
             "  bash android/ci/build_shaderc.sh\n"
-            "or point -DSCR_SHADERC_LIB=... / -DSCR_SHADERC_INCLUDE=... at an existing build. "
-            "NDK r27 and newer no longer contain the shaderc sources at all.")
+            "or point -DSCR_SHADERC_LIB=... / -DSCR_SHADERC_INCLUDE=... at an existing build.\n"
+            "Searched:${SCR_SHADERC_FOUND_TEXT}")
     endif()
     if(SCR_SHADERC_LIB)
+        message(STATUS "shaderc for ${ANDROID_ABI}: ${SCR_SHADERC_LIB}")
         target_link_libraries(scr_runtime PRIVATE ${SCR_SHADERC_LIB})
     endif()
     if(SCR_SHADERC_INCLUDE)
