@@ -49,6 +49,11 @@ extern "C" uint32_t g_cfgFrameRate;
 
 bool g_vkValidation = false;
 
+// Defined by the renderer (runtime/gx/gx_fifo.cpp). Declared here rather than inside BootAndRun:
+// that function is in the anonymous namespace below, and an extern declaration inside one binds to
+// a hidden (anonymous namespace)::g_gpuThread that nothing defines.
+extern bool g_gpuThread;
+
 namespace
 {
 std::string s_dataDir, s_nand;
@@ -65,10 +70,7 @@ void BootAndRun()
     AudioOut_Init();     // AAudio output
     AudioOut_ApplyVolumes(g_config.masterVolume, g_config.speakerVolume);
     MusicMod_Init();
-    {
-        extern bool g_gpuThread;
-        if (g_gpuThread) GX_StartThread();
-    }
+    if (g_gpuThread) GX_StartThread();
     if (!Disc_Open(s_dataDir, g_androidIsoPath, Mods_Loaded())) FATAL("cannot open disc data");
     std::filesystem::create_directories(s_nand);
     IOS_Init(s_nand);
@@ -130,10 +132,7 @@ int AndroidMain(std::vector<std::string> args)
     g_videoConfig.internalScale = g_config.internalScale;
     g_videoConfig.widescreen = g_config.widescreen;
     g_videoConfig.vsync = g_config.vsync;
-    {
-        extern bool g_gpuThread;
-        g_gpuThread = g_config.gpuThread;
-    }
+    g_gpuThread = g_config.gpuThread;
     LOG_INFO("data={} nand={} fps={} scale={}", s_dataDir, s_nand, g_cfgFrameRate, g_videoConfig.internalScale);
     BootAndRun();
     return 0;

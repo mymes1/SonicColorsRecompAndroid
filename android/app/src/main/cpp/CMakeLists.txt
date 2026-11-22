@@ -167,11 +167,19 @@ set(SCR_RUNTIME_ANDROID
 #       Removed: an ANativeActivity_onCreate entry point. The framework never loads this
 #       library itself, so starting the runtime there would run it before a disc is installed.
 
+# Declared here because the runtime target below consults it; see the recompiled-code section.
+option(SCR_COMPILE_GENERATED "Package generated PPC code with fail-fast runtime placeholders" OFF)
+
 if(SCR_RUNTIME_ARCH_OK)
     add_library(scr_runtime SHARED
         ${SCR_RUNTIME_CORE}
         ${SCR_RUNTIME_ANDROID}
         input_bridge.cpp)
+    # The shared runtime refers to a few symbols that only generated/ defines. A launcher build has
+    # no generated code, so it gets the empty-table / abort-on-call equivalents instead.
+    if(NOT SCR_COMPILE_GENERATED)
+        target_sources(scr_runtime PRIVATE no_generated.cpp)
+    endif()
 
     # Vulkan: the NDK ships vulkan/vulkan.h and vulkan/vulkan_android.h for the API level being
     # built, so the APK does not depend on external/vulkan-headers (which is fetched by
@@ -283,7 +291,6 @@ if(SCR_RUNTIME_ARCH_OK)
 endif()   # SCR_RUNTIME_ARCH_OK
 
 # ---------------------------------------------------------------- recompiled guest code
-option(SCR_COMPILE_GENERATED "Package generated PPC code with fail-fast runtime placeholders" OFF)
 if(SCR_COMPILE_GENERATED)
     if(NOT EXISTS "${REPO_ROOT}/generated/sources.cmake")
         message(FATAL_ERROR "Generated PPC sources missing; run tools/build_generated.py")
