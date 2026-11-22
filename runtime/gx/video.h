@@ -1,6 +1,5 @@
 #pragma once
 #include <cstdint>
-#include <d3d11.h>
 
 struct VideoConfig
 {
@@ -14,12 +13,24 @@ struct VideoConfig
 };
 
 extern VideoConfig g_videoConfig;
+
+// The Direct3D 11 device belongs to the desktop backends only; the Android backend is
+// Vulkan and never defines these. ShaderResourceView is an alias for its COM interface so
+// that this header stays free of d3d11.h (shared code includes it on every platform).
+#ifndef SCR_ANDROID
+#include <d3d11.h>
 extern ID3D11Device* g_device;
 extern ID3D11DeviceContext* g_ctx;
+typedef ID3D11ShaderResourceView VideoTextureView;
+#else
+struct ID3D11ShaderResourceView;
+typedef ID3D11ShaderResourceView VideoTextureView;
+#endif
 
 bool Video_Init();
-// Presents the given texture region (an XFB copy) to the window.
-void Video_Present(ID3D11ShaderResourceView* srv, float u0, float v0, float u1, float v1);
+// Presents the given texture region (an XFB copy) to the window. Android: the region of the
+// renderer's own EFB, so the view is unused there.
+void Video_Present(VideoTextureView* srv, float u0, float v0, float u1, float v1);
 // Applied on the window thread (settings changed while the game runs)
 void Video_SetFullscreen(bool on);
 void Video_SetWindowSize(int width, int height);

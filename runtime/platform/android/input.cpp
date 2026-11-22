@@ -1,13 +1,20 @@
 #include "input.h"
 #include "../input.h"
+#include "platform_android.h"
+
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <mutex>
 
 namespace {
 std::mutex mutex;
 PadState state;
 bool connected = false;
+// Rumble is a discontinuous vibration on Android: the VM refreshes it between the guest's
+// frames, so only the 0 -> non-zero transition starts the motor.
+bool rumbling = false;
+char controllerName[64] = "Android controller";
 
 float Clamp(float value, float low, float high) {
     return std::isfinite(value) ? std::clamp(value, low, high) : 0.0f;
@@ -50,9 +57,26 @@ bool Pad_Read(int index, PadState& out) {
     if (index != 0 || !connected) { out = {}; return false; }
     out = state; return true;
 }
-void Pad_SetRumble(int, uint16_t, uint16_t) {} // Android vibrator bridge is not implemented.
+void Pad_SetRumble(int, uint16_t low, uint16_t high) {
+    const bool on = (low | high) != 0;
+    if (on != rumbling) {
+        rumbling = on;
+        if (on) androidapp::Vibrate(60, (int)(std::max(low, high) >> 8));
+        else androidapp::CancelVibration();
+    }
+}
 int Pad_Count() { std::lock_guard<std::mutex> lock(mutex); return connected ? 1 : 0; }
-const char* Pad_Name(int index) { return index == 0 && Pad_Count() ? "Android controller" : nullptr; }
+const char* Pad_Name(int index) {
+    std::lock_guard<std::mutex> lock(mutex);
+    return index == 0 && connected ? controllerName : nullptr;
+}
+// AndroidInput.java's vibrate(int) and the controller's reported name.
+void AndroidInput_RequestVibrate(int ms) { androidapp::Vibrate(ms, 255); }
+void AndroidInput_SetControllerName(const char* name) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (name && *name) { snprintf(controllerName, sizeof(controllerName), "%s", name); }
+    else snprintf(controllerName, sizeof(controllerName), "%s", "Android controller");
+}
 void Input_EnsurePadsProbed() {}
 void Input_PollHotplug() {}
 bool Key_Down(int) { return false; }

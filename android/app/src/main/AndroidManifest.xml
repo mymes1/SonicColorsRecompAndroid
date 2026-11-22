@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- A plain Activity, not a NativeActivity: all native code lives in libscr_runtime.so and is
+         reached through JNI (org.soniccolorsrecomp.android.NativeRunner). Declaring a
+         NativeActivity here would make the framework load the library itself through
+         ANativeActivity_onCreate, which would start the runtime before a disc is installed and
+         without the Surface the Activity has to supply. -->
     <application android:label="Sonic Colors Recomp Preview" android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

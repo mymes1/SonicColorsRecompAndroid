@@ -1273,7 +1273,7 @@ static ID3D11ShaderResourceView* GetTexture(int map, uint32_t* outW, uint32_t* o
     {
         uint32_t tOff = tlutOff & (sizeof(s_tmem) - 1);
         if (ID3D11ShaderResourceView* hd = HiRes_Find(src, GXTex_Size(fmt, w, h), s_tmem + tOff, (uint32_t)sizeof(s_tmem) - tOff, fmt, w, h,
-                                                      ((mode0 >> 5) & 3) != 0))
+                                                      ((mode0 >> 5) & 3) != 0))   // owned by this texture entry now
         {
             e.srv = hd;
             e.w = w;

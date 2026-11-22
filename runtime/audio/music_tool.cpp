@@ -88,7 +88,12 @@ bool MusicTool_Run(const std::vector<std::string>& args,
     // On Windows, CreateProcess inherits the Win32 env block — SetEnvironmentVariableW
     // is required; _putenv_s alone does not update what child processes see.
     const fs::path userBin = Platform_MusicToolsBinDir();
+#ifdef SCR_ANDROID
+    // The managed-dependency downloader (audio/music_deps.cpp) is a Windows feature and is not
+    // built for the APK; Android never runs this tool at all (see MusicMod_Init).
+#else
     MusicDeps_ApplyEnv();
+#endif
 #ifdef _WIN32
     SetEnvironmentVariableW(L"SCR_MUSIC_BIN", userBin.wstring().c_str());
     // Narrow CRT copy for in-process getenv; Win32 block above is what CreateProcess inherits.

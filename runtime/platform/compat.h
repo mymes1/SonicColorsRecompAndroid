@@ -43,7 +43,16 @@ inline uint32_t _rotl(uint32_t v, int n)
     return n ? (v << n) | (v >> (32 - n)) : v;
 }
 
+// MSVC's YieldProcessor is PAUSE on x86. Arm has YIELD, and the builtin it maps to depends on
+// the target, so ask for the instruction rather than an x86-only builtin (which does not
+// compile for arm64-v8a at all).
+#if defined(__i386__) || defined(__x86_64__)
 #define YieldProcessor() __builtin_ia32_pause()
+#elif defined(__aarch64__) || defined(__arm__)
+#define YieldProcessor() __asm__ __volatile__("yield" ::: "memory")
+#else
+#define YieldProcessor() ((void)0)
+#endif
 
 inline int fopen_s(FILE** f, const char* path, const char* mode)
 {

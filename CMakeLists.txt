@@ -137,6 +137,39 @@ if(WIN32 OR LINUX)
         endif()
     endif()
 
+    # The Android installer (runtime/platform/android/iso_install.cpp) reads disc images
+    # without nod, so it gets its own test against a synthetic disc image. Host build only:
+    # the same source is compiled into the APK for arm64.
+    add_executable(scr_iso_install_test EXCLUDE_FROM_ALL
+        tools/iso_install_test/main.cpp
+        runtime/platform/android/iso_install.cpp
+        runtime/platform/aes128.cpp
+        runtime/platform/linux/sha1.cpp
+        runtime/install/releases.cpp)
+    target_compile_definitions(scr_iso_install_test PRIVATE SCR_ISO_INSTALL_TEST)
+    target_include_directories(scr_iso_install_test PRIVATE runtime runtime/platform)
+    target_link_libraries(scr_iso_install_test PRIVATE pthread)
+    if(NOT WIN32)
+        target_compile_options(scr_iso_install_test PRIVATE -include ${CMAKE_SOURCE_DIR}/runtime/platform/compat.h)
+    endif()
+    set_target_properties(scr_iso_install_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${SCR_OUT_DIR}
+                                                          RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${SCR_OUT_DIR}
+                                                          RUNTIME_OUTPUT_DIRECTORY_RELEASE ${SCR_OUT_DIR})
+
+    # The Android PNG codec (runtime/platform/android/image.cpp) replaces SDL3/WIC, so it is
+    # checked against fixed pixel references generated independently by Python's zlib.
+    add_executable(scr_image_test EXCLUDE_FROM_ALL
+        tools/image_test/main.cpp
+        runtime/platform/android/image.cpp)
+    target_include_directories(scr_image_test PRIVATE runtime runtime/platform)
+    target_compile_definitions(scr_image_test PRIVATE SCR_ANDROID)
+    if(NOT WIN32)
+        target_compile_options(scr_image_test PRIVATE -include ${CMAKE_SOURCE_DIR}/runtime/platform/compat.h)
+    endif()
+    set_target_properties(scr_image_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${SCR_OUT_DIR}
+                                                     RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${SCR_OUT_DIR}
+                                                     RUNTIME_OUTPUT_DIRECTORY_RELEASE ${SCR_OUT_DIR})
+
     # Disc-path helpers + unsupported-region copy (no image I/O).
     add_executable(scr_install_helpers_test EXCLUDE_FROM_ALL tools/install_helpers_test/main.cpp)
     target_link_libraries(scr_install_helpers_test PRIVATE scr_installer)

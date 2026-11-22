@@ -94,3 +94,5 @@ Thumbs.db
 # Android local tooling
 /android/.gradle/
 /android/local.properties
+# Written by tools/image_test at run time.
+/tools/image_test/roundtrip.png

@@ -46,7 +46,14 @@ std::string s_proofTsv;
 
 static fs::path FindMusicAssetTool() { return MusicTool_Find(); }
 
+#ifdef SCR_ANDROID
+// The music-mod path resolver (audio/music_paths.cpp) pulls in nlohmann/json for the Music
+// Library tab's status query, which the APK does not build; on Android the cache lives under the
+// Music Library directory the manifest already points at.
+static fs::path DefaultCacheRoot() { return MusicManifest_DefaultDir() / "cache"; }
+#else
 static fs::path DefaultCacheRoot() { return MusicPaths_CacheRoot(); }
+#endif
 
 static std::string JsonGetString(const std::string& json, const char* key)
 {
@@ -184,6 +191,20 @@ bool MusicMod_Debug() { return s_debug; }
 
 void MusicMod_Init()
 {
+#ifdef SCR_ANDROID
+    // Music Library replacement needs tools/music_asset and a desktop process to drive it, and the
+    // APK ships neither; the original soundtrack is the only option here (see music_paths.h).
+    s_active = false;
+    s_useOriginal = true;
+    s_patchedCpk.clear();
+    s_statusJson.clear();
+    s_patchedSha.clear();
+    s_proof.clear();
+    s_loggedCpkOpen = false;
+    if (g_config.musicModsEnabled)
+        LOG_INFO("[MUSIC] replacement tracks are not available on Android; using the original soundtrack");
+    return;
+#else
     s_active = false;
     s_useOriginal = true;
     s_patchedCpk.clear();
@@ -328,6 +349,7 @@ void MusicMod_Init()
     LOG_INFO("[MUSIC] Proof entries: {} (CRI loads replacement AAX; no host overlay)", s_proof.size());
     if (s_debug)
         LOG_INFO("[MUSIC][dbg] status={}", s_statusJson.size() > 400 ? s_statusJson.substr(0, 400) + "…" : s_statusJson);
+#endif
 }
 
 void MusicMod_Shutdown()

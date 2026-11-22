@@ -7,6 +7,9 @@
 #include "../platform/compat.h"
 #include "../platform/image.h"
 #include "../platform/platform.h"
+#ifdef SCR_ANDROID
+#include "../platform/android/renderer_vk.h"   // Renderer_PackTexture* (Vulkan texture ids)
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -24,7 +27,7 @@ namespace fs = std::filesystem;
 static std::unordered_map<std::string, fs::path> s_files;   // lowercase name -> file
 struct LoadedTex
 {
-    ID3D11ShaderResourceView* srv = nullptr;   // nullptr = failed load (negative cache)
+    HiResTexture tex = HiResTexture{};   // unset = failed load (negative cache)
     uint32_t lastFrame = 0;
 };
 static std::unordered_map<std::string, LoadedTex> s_loaded;
@@ -91,6 +94,183 @@ void Scan(const fs::path& dir)
     }
 }
 
+// A decoded image: RGBA8 pixels plus the source's dimensions. Block-compressed DDS files are
+// expanded here on Android, where there is no driver-side BC support to rely on; on the desktop
+// the compressed blocks are handed to D3D11 untouched.
+struct Image
+{
+    uint32_t w = 0, h = 0;
+    std::vector<uint8_t> pixels;   // RGBA8, rows top to bottom
+};
+
+// ---- BC1/BC2/BC3 block decoding (DDS files in texture packs use these heavily).
+// BC7 is rejected rather than half-decoded: it has 8 modes with their own partition tables, and
+// getting one wrong shows up as corrupted art that is far harder to notice than a load failure.
+void DecodeBC1Block(const uint8_t* src, bool allowTransparent, uint8_t* out)
+{
+    const uint16_t c0 = (uint16_t)(src[0] | (src[1] << 8));
+    const uint16_t c1 = (uint16_t)(src[2] | (src[3] << 8));
+    auto expand = [](uint16_t c, uint8_t* rgb) {
+        const int r5 = c >> 11, g6 = (c >> 5) & 0x3F, b5 = c & 0x1F;
+        rgb[0] = (uint8_t)((r5 << 3) | (r5 >> 2));
+        rgb[1] = (uint8_t)((g6 << 2) | (g6 >> 4));
+        rgb[2] = (uint8_t)((b5 << 3) | (b5 >> 2));
+    };
+    uint8_t colour[4][3];
+    uint8_t alpha[4] = { 255, 255, 255, 255 };
+    expand(c0, colour[0]);
+    expand(c1, colour[1]);
+    if (c0 > c1 || !allowTransparent)
+    {
+        // Four-colour mode: two interpolated colours, no transparency.
+        for (int i = 0; i < 3; i++)
+        {
+            colour[2][i] = (uint8_t)((2 * colour[0][i] + colour[1][i]) / 3);
+            colour[3][i] = (uint8_t)((colour[0][i] + 2 * colour[1][i]) / 3);
+        }
+    }
+    else
+    {
+        // Three-colour mode: the midpoint plus a transparent black.
+        for (int i = 0; i < 3; i++)
+        {
+            colour[2][i] = (uint8_t)((colour[0][i] + colour[1][i]) / 2);
+            colour[3][i] = 0;
+        }
+        alpha[2] = 255;
+        alpha[3] = 0;
+    }
+    uint32_t bits = (uint32_t)src[4] | ((uint32_t)src[5] << 8) | ((uint32_t)src[6] << 16) | ((uint32_t)src[7] << 24);
+    for (int i = 0; i < 16; i++)
+    {
+        const int idx = (int)((bits >> (2 * i)) & 3);
+        out[i * 4 + 0] = colour[idx][0];
+        out[i * 4 + 1] = colour[idx][1];
+        out[i * 4 + 2] = colour[idx][2];
+        out[i * 4 + 3] = alpha[idx];
+    }
+}
+
+// BC4: one channel, used both for BC3's alpha and on its own. 8-byte block, 3-bit indices.
+void DecodeBC4Block(const uint8_t* src, uint8_t* out)
+{
+    const uint8_t a0 = src[0], a1 = src[1];
+    uint8_t pal[8];
+    pal[0] = a0;
+    pal[1] = a1;
+    if (a0 > a1)
+    {
+        for (int i = 1; i <= 6; i++) pal[i + 1] = (uint8_t)(((7 - i) * a0 + i * a1) / 7);
+    }
+    else
+    {
+        for (int i = 1; i <= 4; i++) pal[i + 1] = (uint8_t)(((5 - i) * a0 + i * a1) / 5);
+        pal[6] = 0;
+        pal[7] = 255;
+    }
+    uint64_t bits = 0;
+    for (int i = 0; i < 6; i++) bits |= (uint64_t)src[2 + i] << (8 * i);
+    for (int i = 0; i < 16; i++) out[i] = pal[(bits >> (3 * i)) & 7];
+}
+
+void DecodeBCBlock(const uint8_t* src, size_t size, uint32_t format, uint32_t w, uint32_t h, Image& img)
+{
+    // format: 1 = BC1, 2 = BC2, 3 = BC3.
+    const uint32_t blockBytes = (format == 1) ? 8 : 16;
+    const uint32_t blocksX = (w + 3) / 4, blocksY = (h + 3) / 4;
+    if (size < (size_t)blocksX * blocksY * blockBytes) return;
+    img.pixels.assign((size_t)w * h * 4, 255);
+    std::vector<uint8_t> block(64);
+    for (uint32_t by = 0; by < blocksY; by++)
+        for (uint32_t bx = 0; bx < blocksX; bx++)
+        {
+            const uint8_t* s = src + ((size_t)by * blocksX + bx) * blockBytes;
+            if (format == 1)
+                DecodeBC1Block(s, true, block.data());
+            else if (format == 2)
+            {
+                DecodeBC1Block(s + 8, false, block.data());
+                for (int i = 0; i < 16; i++) block[i * 4 + 3] = (uint8_t)((s[i / 2] >> ((i & 1) * 4)) & 15) * 17;
+            }
+            else if (format == 3)
+            {
+                DecodeBC1Block(s + 8, false, block.data());
+                uint8_t alpha[16];
+                DecodeBC4Block(s, alpha);
+                for (int i = 0; i < 16; i++) block[i * 4 + 3] = alpha[i];
+            }
+            for (int y = 0; y < 4; y++)
+            {
+                const uint32_t py = by * 4 + y;
+                if (py >= h) break;
+                for (int x = 0; x < 4; x++)
+                {
+                    const uint32_t px = bx * 4 + x;
+                    if (px >= w) break;
+                    memcpy(img.pixels.data() + ((size_t)py * w + px) * 4, block.data() + (y * 4 + x) * 4, 4);
+                }
+            }
+        }
+}
+
+bool ReadDDS(const fs::path& path, Image& img)
+{
+    std::ifstream f(path, std::ios::binary);
+    std::vector<uint8_t> d((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (d.size() < 128 || memcmp(d.data(), "DDS ", 4) != 0) return false;
+    auto u32 = [&](size_t o) { return Rd32(d.data() + o); };
+    img.h = u32(12);
+    img.w = u32(16);
+    const uint32_t pfFlags = u32(80), fourcc = u32(84), bpp = u32(88);
+    size_t off = 128;
+    uint32_t format = 0;   // 1 BC1, 2 BC2, 3 BC3, 0 = uncompressed RGBA
+    if (pfFlags & 4)
+    {
+        if (fourcc == FOURCC('D', 'X', 'T', '1')) format = 1;
+        else if (fourcc == FOURCC('D', 'X', 'T', '3')) format = 2;
+        else if (fourcc == FOURCC('D', 'X', 'T', '5')) format = 3;
+        else if (fourcc == FOURCC('D', 'X', '1', '0') && d.size() >= 148)
+        {
+            const uint32_t dxgi = u32(128);
+            if (dxgi >= 95 && dxgi <= 99) return false;   // BC7: see the note above
+            else if (dxgi >= 70 && dxgi <= 72) format = 1;
+            else if (dxgi >= 73 && dxgi <= 75) format = 2;
+            else if (dxgi >= 76 && dxgi <= 78) format = 3;
+            else if (dxgi == 28 || dxgi == 29 || dxgi == 87 || dxgi == 91) format = 0;
+            else return false;
+            off = 148;
+        }
+        else return false;
+    }
+    else if ((pfFlags & 0x40) && bpp == 32)
+        format = 0;
+    else
+        return false;
+
+    if (!img.w || !img.h) return false;
+    const size_t size = (size_t)img.w * img.h * 4;
+    if (format != 0)
+    {
+        DecodeBCBlock(d.data() + off, d.size() - off, format, img.w, img.h, img);
+        return !img.pixels.empty();
+    }
+    // Uncompressed 32-bit: the channel masks say whether the bytes are RGBA or BGRA.
+    if (off + size > d.size()) return false;
+    const bool bgra = u32(92) == 0x00FF0000u && u32(96) == 0x0000FF00u;
+    auto convert = [bgra](const uint8_t* in, uint8_t* out) {
+        out[0] = bgra ? in[2] : in[0];
+        out[1] = in[1];
+        out[2] = bgra ? in[0] : in[2];
+        out[3] = in[3];
+    };
+    img.pixels.resize(size);
+    for (size_t i = 0; i < size; i += 4) convert(d.data() + off + i, img.pixels.data() + i);
+    return true;
+}
+
+#ifndef SCR_ANDROID
+// The desktop backend takes the pixels straight into a D3D11 texture, optionally asking the driver
+// to build the mip chain, so nothing is decoded in software there.
 ID3D11ShaderResourceView* MakeTexture(uint32_t w, uint32_t h, DXGI_FORMAT fmt, const std::vector<std::vector<uint8_t>>& levels,
                                       const std::vector<uint32_t>& pitches, bool genMips)
 {
@@ -122,66 +302,59 @@ ID3D11ShaderResourceView* MakeTexture(uint32_t w, uint32_t h, DXGI_FORMAT fmt, c
     if (genMips && srv) g_ctx->GenerateMips(srv);
     return srv;
 }
+#endif
 
-ID3D11ShaderResourceView* LoadPNG(const fs::path& path, bool mipmapped)
+// A fresh texture, or none: pointers and ids cannot be tested the same way.
+inline bool IsSet(HiResTexture t)
 {
-    uint32_t w = 0, h = 0;
-    std::vector<std::vector<uint8_t>> lv(1);
-    if (!Image_LoadPNG(path, w, h, lv[0])) return nullptr;
-    return MakeTexture(w, h, DXGI_FORMAT_R8G8B8A8_UNORM, lv, { w * 4 }, mipmapped);
+#ifdef SCR_ANDROID
+    return t != 0;
+#else
+    return t != nullptr;
+#endif
 }
 
-// Minimal DDS reader: BC1/BC2/BC3/BC7 (FourCC or DX10 header) and RGBA8, with mips.
-ID3D11ShaderResourceView* LoadDDS(const fs::path& path)
+// Turns decoded pixels into a texture for the active backend.
+HiResTexture Upload(const Image& img, bool mipmapped)
 {
-    std::ifstream f(path, std::ios::binary);
-    std::vector<uint8_t> d((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    if (d.size() < 128 || memcmp(d.data(), "DDS ", 4) != 0) return nullptr;
-    auto u32 = [&](size_t o) { return Rd32(d.data() + o); };
-    uint32_t h = u32(12), w = u32(16), mips = std::max(1u, u32(28));
-    uint32_t pfFlags = u32(80), fourcc = u32(84), bpp = u32(88);
-    size_t off = 128;
-    DXGI_FORMAT fmt = DXGI_FORMAT_UNKNOWN;
-    if (pfFlags & 4)
+    if (!img.w || !img.h || img.pixels.empty()) return HiResTexture{};
+#ifdef SCR_ANDROID
+    (void)mipmapped;   // the Vulkan path samples one level; pack mips would need a chain upload
+    return Renderer_PackTexture(img.pixels.data(), img.w, img.h);
+#else
+    std::vector<std::vector<uint8_t>> lv(1);
+    lv[0] = img.pixels;
+    return MakeTexture(img.w, img.h, DXGI_FORMAT_R8G8B8A8_UNORM, lv, { img.w * 4 }, mipmapped);
+#endif
+}
+
+void Release(HiResTexture& tex)
+{
+    if (IsSet(tex))
     {
-        if (fourcc == FOURCC('D', 'X', 'T', '1')) fmt = DXGI_FORMAT_BC1_UNORM;
-        else if (fourcc == FOURCC('D', 'X', 'T', '3')) fmt = DXGI_FORMAT_BC2_UNORM;
-        else if (fourcc == FOURCC('D', 'X', 'T', '5')) fmt = DXGI_FORMAT_BC3_UNORM;
-        else if (fourcc == FOURCC('D', 'X', '1', '0') && d.size() >= 148)
-        {
-            fmt = (DXGI_FORMAT)u32(128);
-            off = 148;
-        }
+#ifdef SCR_ANDROID
+        Renderer_PackTextureRelease(tex);
+#else
+        tex->Release();
+#endif
     }
-    else if ((pfFlags & 0x40) && bpp == 32)
-        fmt = u32(92) == 0xFF ? DXGI_FORMAT_R8G8B8A8_UNORM : DXGI_FORMAT_B8G8R8A8_UNORM;
-    bool bc = false;
-    uint32_t blockBytes = 0;
-    switch (fmt)
+    tex = HiResTexture{};
+}
+
+HiResTexture LoadFile(const fs::path& path, bool mipmapped)
+{
+    Image img;
+    if (Lower(path.extension().string()) == ".dds")
     {
-    case DXGI_FORMAT_BC1_UNORM: case DXGI_FORMAT_BC1_UNORM_SRGB: bc = true; blockBytes = 8; break;
-    case DXGI_FORMAT_BC2_UNORM: case DXGI_FORMAT_BC3_UNORM: case DXGI_FORMAT_BC7_UNORM: case DXGI_FORMAT_BC7_UNORM_SRGB:
-    case DXGI_FORMAT_BC2_UNORM_SRGB: case DXGI_FORMAT_BC3_UNORM_SRGB: bc = true; blockBytes = 16; break;
-    case DXGI_FORMAT_R8G8B8A8_UNORM: case DXGI_FORMAT_B8G8R8A8_UNORM: case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: break;
-    default: return nullptr;
+        if (!ReadDDS(path, img)) return HiResTexture{};
     }
-    std::vector<std::vector<uint8_t>> lv;
-    std::vector<uint32_t> pitches;
-    uint32_t lw = w, lh = h;
-    for (uint32_t i = 0; i < mips; i++)
+    else
     {
-        uint32_t pitch = bc ? std::max(1u, (lw + 3) / 4) * blockBytes : lw * 4;
-        uint32_t rows = bc ? std::max(1u, (lh + 3) / 4) : lh;
-        size_t size = (size_t)pitch * rows;
-        if (off + size > d.size()) break;
-        lv.emplace_back(d.begin() + off, d.begin() + off + size);
-        pitches.push_back(pitch);
-        off += size;
-        lw = std::max(1u, lw / 2);
-        lh = std::max(1u, lh / 2);
+        std::vector<uint8_t> rgba;
+        if (!Image_LoadPNG(path, img.w, img.h, rgba)) return HiResTexture{};
+        img.pixels = std::move(rgba);
     }
-    if (lv.empty()) return nullptr;
-    return MakeTexture(w, h, fmt, lv, pitches, false);
+    return Upload(img, mipmapped);
 }
 }   // namespace
 
@@ -197,7 +370,7 @@ void HiRes_TickEvict(uint32_t frame)
     {
         if (s_hiresFrame - it->second.lastFrame > kAge)
         {
-            if (it->second.srv) it->second.srv->Release();
+            Release(it->second.tex);
             it = s_loaded.erase(it);
         }
         else
@@ -208,7 +381,7 @@ void HiRes_TickEvict(uint32_t frame)
         auto oldest = s_loaded.begin();
         for (auto it = s_loaded.begin(); it != s_loaded.end(); ++it)
             if (it->second.lastFrame < oldest->second.lastFrame) oldest = it;
-        if (oldest->second.srv) oldest->second.srv->Release();
+        Release(oldest->second.tex);
         s_loaded.erase(oldest);
     }
 }
@@ -274,8 +447,8 @@ static void MakeNames(const uint8_t* data, uint32_t dataSize, const uint8_t* tlu
         names[0] = std::format("{}_{}", base, fmt);
 }
 
-ID3D11ShaderResourceView* HiRes_Find(const uint8_t* data, uint32_t dataSize, const uint8_t* tlut, uint32_t tlutSize,
-                                     uint32_t fmt, uint32_t w, uint32_t h, bool mipmapped)
+HiResTexture HiRes_Find(const uint8_t* data, uint32_t dataSize, const uint8_t* tlut, uint32_t tlutSize,
+                        uint32_t fmt, uint32_t w, uint32_t h, bool mipmapped)
 {
     std::string names[2];
     MakeNames(data, dataSize, tlut, tlutSize, fmt, w, h, mipmapped, names);
@@ -285,21 +458,34 @@ ID3D11ShaderResourceView* HiRes_Find(const uint8_t* data, uint32_t dataSize, con
         auto f = s_files.find(n);
         if (f == s_files.end()) continue;
         auto l = s_loaded.find(n);
-        ID3D11ShaderResourceView* srv;
-        if (l != s_loaded.end())
-            srv = l->second.srv;
-        else
+        if (l == s_loaded.end())
         {
-            bool dds = Lower(f->second.extension().string()) == ".dds";
-            srv = dds ? LoadDDS(f->second) : LoadPNG(f->second, mipmapped);
-            if (!srv) LOG_WARN("texture pack: failed to load {}", f->second.string());
-            l = s_loaded.emplace(n, LoadedTex{ srv, s_hiresFrame }).first;
+            const HiResTexture tex = LoadFile(f->second, mipmapped);
+            if (!IsSet(tex)) LOG_WARN("texture pack: failed to load {}", f->second.string());
+            l = s_loaded.emplace(n, LoadedTex{ tex, s_hiresFrame }).first;
         }
         l->second.lastFrame = s_hiresFrame;
-        if (srv) srv->AddRef();
-        return srv;
+        if (IsSet(l->second.tex))
+        {
+#ifdef SCR_ANDROID
+            Renderer_PackTextureAddRef(l->second.tex);
+#else
+            l->second.tex->AddRef();
+#endif
+        }
+        return l->second.tex;
     }
-    return nullptr;
+    return HiResTexture{};
+}
+
+void HiRes_Release(HiResTexture tex)
+{
+    if (!IsSet(tex)) return;
+#ifdef SCR_ANDROID
+    Renderer_PackTextureRelease(tex);
+#else
+    tex->Release();
+#endif
 }
 
 bool g_dumpTextures = false;
