@@ -67,7 +67,9 @@ AAudioStream* OpenStream(uint32_t channels, uint32_t rate)
         LOG_ERROR("AAudio: cannot open {} Hz {} channel stream ({})", rate, channels, AAudio_convertResultToText(r));
         return nullptr;
     }
-    if (g_audioMute) AAudioStream_setVolume(stream, 0.0f);
+    // No stream-level volume call is made: AAudio never exposed one in the NDK, and the gain is
+    // applied to every sample on the way out (g_audioVolume/g_speakerVolume), which also covers
+    // mute and suspend.
     if (AAudioStream_requestStart(stream) != AAUDIO_OK)
     {
         LOG_ERROR("AAudio: start failed");
@@ -105,12 +107,13 @@ int QueueFrames(AAudioStream* stream)
     return std::max(0, written - read);
 }
 
+// The output gain is applied per sample (the staging buffer is written through g_audioVolume), so
+// this only has to publish the suspended state; a stream that is mid-buffer finishes what it has,
+// which is why the flag is read with relaxed ordering rather than used for synchronisation.
 void ApplyGain()
 {
-    const float gain = (s_suspended.load(std::memory_order_relaxed) || g_audioMute) ? 0.0f : 1.0f;
-    if (s_stream) AAudioStream_setVolume(s_stream, gain);
-    for (auto* sp : s_speaker)
-        if (sp) AAudioStream_setVolume(sp, gain);
+    // Nothing to call: see the note in OpenStream. Kept as a named step because it documents where
+    // the mute/suspend decision is consumed.
 }
 }   // namespace
 

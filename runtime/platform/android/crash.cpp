@@ -2,10 +2,13 @@
 // the watchdog's guest-thread sampling.
 //
 // This is runtime/platform/linux/crash.cpp adapted to Bionic: `ucontext_t::uc_mcontext` has no
-// `gregs` array, so the interrupted PC comes from `pc` (AArch64) or `rip` (x86-64), and
-// execinfo.h/dladdr come from libc/libdl on the NDK, so symbolisation is the same. A crash on a
-// phone has no console to read, which is why everything also goes through the log file the
-// Activity points the player at.
+// `gregs` array, so the interrupted PC comes from `pc` (AArch64) or `rip` (x86-64), and dladdr
+// comes from libdl on the NDK, so symbolisation is the same. A crash on a phone has no console to
+// read, which is why everything also goes through the log file the Activity points the player at.
+//
+// backtrace()/execinfo.h only exists from API 33 and the APK targets 26, so the frames are walked
+// with _Unwind_Backtrace instead: that is the mechanism bionic's own backtrace() uses, and it is
+// available at every API level.
 #include "../../kernel/crash.h"
 #include "../../kernel/memory.h"
 #include "../../kernel/threads.h"
@@ -20,10 +23,28 @@
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
-#include <execinfo.h>
 #include <pthread.h>
 #include <ucontext.h>
+#include <unwind.h>
 #include <unistd.h>
+
+// The unwinder stops once this many frames are collected; a crash inside a deeply nested guest
+// call has no use for more, and the log is written from a signal handler.
+struct UnwindFrames
+{
+    void** out;
+    int max;
+    int count;
+};
+
+_Unwind_Reason_Code CollectFrame(_Unwind_Context* context, void* arg)
+{
+    auto* frames = static_cast<UnwindFrames*>(arg);
+    const uintptr_t ip = (uintptr_t)_Unwind_GetIP(context);
+    if (ip == 0) return _URC_NO_REASON;
+    if (frames->count < frames->max) frames->out[frames->count++] = (void*)ip;
+    return frames->count < frames->max ? _URC_NO_REASON : _URC_END_OF_STACK;
+}
 
 extern bool g_noMessageBox;
 void Gamepad_StopRumble();
@@ -90,7 +111,9 @@ void CrashHandler(int sig, siginfo_t* si, void* uc)
               guestFn ? pc - Crash_FirstHostFunction() : 0);
 
     void* frames[62];
-    const int n = backtrace(frames, 62);
+    UnwindFrames collected{ frames, 62, 0 };
+    _Unwind_Backtrace(CollectFrame, &collected);
+    const int n = collected.count;
     for (int i = 0; i < n; i++)
     {
         Dl_info di{};
