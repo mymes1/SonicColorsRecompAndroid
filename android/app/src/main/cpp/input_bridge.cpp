@@ -153,7 +153,7 @@ Java_org_soniccolorsrecomp_android_AndroidInput_vibrate(JNIEnv*, jclass, jint ms
 {
     // Wii Remote rumble reaches this; the Activity owns the Vibrator, so the platform layer
     // reports the request and the Java haptics (touch feedback, see GameInputView) stay
-    // separate. Pad_SetRumble calls this through androidapp::Vibrate.
-    extern void AndroidInput_RequestVibrate(int ms);
+    // separate. Pad_SetRumble calls this through androidapp::Vibrate. The declaration lives in
+    // input.h: a function-local extern here would get C linkage and never match the definition.
     AndroidInput_RequestVibrate(ms);
 }
