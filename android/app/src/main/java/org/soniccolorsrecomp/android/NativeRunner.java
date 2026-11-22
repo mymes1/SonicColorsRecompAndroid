@@ -154,7 +154,7 @@ public final class NativeRunner {
 
     private static String installError(int rc) {
         switch (rc) {
-            case 1: return "The image could not be opened (ISO, RVZ, WIA, WBFS, CISO, GCZ or ZIP).";
+            case 1: return "The disc image could not be opened. Choose a plain ISO, or a ZIP holding one.";
             case 2: return "This is not Sonic Colors PAL SNCP8P.";
             case 3: return "This release's main.dol is not the one this build was made from.";
             case 4: return "Not enough free space, or the storage is read-only.";

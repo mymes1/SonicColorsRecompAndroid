@@ -44,11 +44,13 @@ import java.util.Locale;
  */
 public class MainActivity extends Activity {
     private static final int PICK_DISC = 1;
+    private static final int PICK_KEYS = 2;
 
     private SharedPreferences prefs;
     private FrameLayout root;
     private TextView status;
     private TextView discLine;
+    private TextView keysLine;
     private Button playButton;
     private ProgressBar progress;
     private Uri disc;
@@ -145,6 +147,12 @@ public class MainActivity extends Activity {
         progress.setVisibility(View.GONE);
         page.addView(progress);
 
+        keysLine = text("", 13);
+        page.addView(keysLine);
+        page.addView(button("Provide keys.txt (only needed for an encrypted ISO)",
+                v -> pickKeys()));
+        updateKeysLine();
+
         playButton = button("Play", v -> startGame());
         page.addView(playButton);
 
@@ -206,6 +214,61 @@ public class MainActivity extends Activity {
         }
     }
 
+    /**
+     * An encrypted retail ISO needs the player's own console key. The native installer reads it from
+     * a keys.txt in the app's files directory, so the chosen document is copied there once and then
+     * stays put: no key material is ever shipped in the APK, and none is logged.
+     */
+    private void pickKeys() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        startActivityForResult(intent, PICK_KEYS);
+    }
+
+    private void importKeys(Uri chosen) {
+        Thread t = new Thread(() -> {
+            java.io.File dest = NativeRunner.keysFile(this);
+            try (java.io.InputStream in = getContentResolver().openInputStream(chosen)) {
+                if (in == null) throw new java.io.IOException("cannot open the document");
+                // Read a little first so an obviously wrong pick (the ISO itself, a photo) is
+                // rejected before overwriting a working key file.
+                byte[] head = new byte[4096];
+                int n = in.read(head);
+                if (n <= 0) throw new java.io.IOException("the file is empty");
+                String text = new String(head, 0, n, java.nio.charset.StandardCharsets.US_ASCII);
+                String lower = text.toLowerCase(Locale.ROOT);
+                if (!lower.contains("common-key") && !lower.contains("rvl-key") && !lower.contains("key=")) {
+                    runOnUiThread(() -> status.setText("That does not look like a keys.txt "
+                            + "(it should contain common-key-0 = …)."));
+                    return;
+                }
+                // Re-open: the peek above consumed part of the stream.
+                try (java.io.InputStream all = getContentResolver().openInputStream(chosen);
+                     java.io.OutputStream out = new java.io.FileOutputStream(dest)) {
+                    if (all == null) throw new java.io.IOException("cannot open the document");
+                    byte[] buf = new byte[1 << 16];
+                    int got;
+                    while ((got = all.read(buf)) > 0) out.write(buf, 0, got);
+                }
+                runOnUiThread(() -> {
+                    updateKeysLine();
+                    status.setText("Key file saved. Choose your disc image again to retry.");
+                });
+            } catch (java.io.IOException | SecurityException e) {
+                runOnUiThread(() -> status.setText("Cannot read that file: " + e.getMessage()));
+            }
+        }, "scr-keys");
+        t.start();
+    }
+
+    private void updateKeysLine() {
+        if (keysLine == null) return;
+        keysLine.setText(NativeRunner.hasKeys(this)
+                ? "Key file: keys.txt saved (encrypted ISOs can be installed)."
+                : "Key file: none. A decrypted ISO, or a ZIP of one, needs no key file.");
+    }
+
     private void pickDisc() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -216,12 +279,22 @@ public class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
-        if (request != PICK_DISC || result != RESULT_OK || data == null || data.getData() == null) return;
+        if (data == null || data.getData() == null) return;
+        if (request == PICK_KEYS) {
+            if (result == RESULT_OK) importKeys(data.getData());
+            return;
+        }
+        if (request != PICK_DISC || result != RESULT_OK) return;
         Uri chosen = data.getData();
         String name = displayName(chosen).toLowerCase(Locale.ROOT);
-        if (!name.endsWith(".iso") && !name.endsWith(".zip") && !name.endsWith(".rvz")
-                && !name.endsWith(".wbfs") && !name.endsWith(".wia") && !name.endsWith(".gcz")) {
-            status.setText("Choose an ISO / ZIP / RVZ / WBFS / WIA image of your disc.");
+        // Only what the installer can actually read: a plain ISO, or a ZIP holding one. The
+        // compressed formats are decoded by nod, which is a desktop-only Rust library, so offering
+        // them here would let the player sit through a multi-gigabyte copy and then fail.
+        if (!name.endsWith(".iso") && !name.endsWith(".zip")) {
+            status.setText(name.endsWith(".rvz") || name.endsWith(".wbfs") || name.endsWith(".wia")
+                    || name.endsWith(".gcz") || name.endsWith(".ciso")
+                    ? "That format is not readable on device. Convert your disc to an ISO (or a ZIP of one) and choose it."
+                    : "Choose your disc as an ISO, or a ZIP containing the ISO.");
             return;
         }
         try {

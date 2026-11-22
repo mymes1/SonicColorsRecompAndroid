@@ -17,6 +17,8 @@
 // The DATA partition's decrypted stream is boot.bin (0x440), bi2.bin (0x2000),
 // apploader.img, then the FST and main.dol at the offsets in boot.bin's boot block.
 #include "iso_install.h"
+#include <array>
+#include "deflate.h"   // Inflate_Raw: ZIP entries
 
 #include "../../install/releases.h"
 #include "../../platform/sha1.h"
@@ -87,12 +89,249 @@ std::string Hex(const uint8_t* d, size_t n)
     return s;
 }
 
+namespace
+{
+// A disc image inside a ZIP is unpacked into RAM, so the ceiling has to cover a real Wii image
+// (single-layer 4.7 GB, dual-layer 8.5 GB) without letting a corrupt entry size become a wild
+// allocation. Entry sizes in this reader are 32-bit (ZIP64 is rejected above), so the ceiling is
+// capped at what that can express.
+constexpr uint32_t kMaxZipEntry = 0xFFFFFFFFu;
+}   // namespace
+
+// ------------------------------------------------------------------ ZIP entry extraction
+// Players hand over whatever the rip site gave them, which is usually a ZIP around the ISO. The
+// player is copied into app storage before this point, so a byte range of the archive can be
+// inflated on demand: the entry becomes a random-access image of its own.
+class ZipImage
+{
+public:
+    ~ZipImage() { free(data_); }
+
+    // Whether the file even ends with a ZIP end-of-central-directory record. Only then is it
+    // treated as an archive; everything else goes down the plain-ISO path, which reports its own
+    // errors.
+    static bool LooksLikeZip(const fs::path& path)
+    {
+        FILE* f = fopen(path.string().c_str(), "rb");
+        if (!f) return false;
+        fseeko(f, 0, SEEK_END);
+        const uint64_t size = (uint64_t)ftello(f);
+        if (size < 22) { fclose(f); return false; }
+        uint8_t sig[4] = {};
+        fseeko(f, (off_t)(size - 22), SEEK_SET);
+        const bool ok = fread(sig, 1, 4, f) == 4;
+        fclose(f);
+        return ok && sig[0] == 'P' && sig[1] == 'K' && sig[2] == 5 && sig[3] == 6;
+    }
+
+    // Opens the archive and unpacks its one Wii image, or explains in player terms why not.
+    bool Open(const fs::path& path, std::string& error)
+    {
+        FILE* f = fopen(path.string().c_str(), "rb");
+        if (!f) return false;
+        fseeko(f, 0, SEEK_END);
+        const uint64_t size = (uint64_t)ftello(f);
+        fclose(f);
+
+        // The end-of-central-directory record sits in the last 64 KiB that may also hold a
+        // comment, so it has to be searched for rather than read at a fixed offset.
+        const uint64_t tailSize = std::min<uint64_t>(size, 0x10000 + 22);
+        std::vector<uint8_t> tail((size_t)tailSize);
+        if (!ReadFileRange(path, size - tailSize, tail.data(), tail.size())) return false;
+        for (size_t i = tailSize >= 22 ? tailSize - 22 : 0;; i--)
+        {
+            if (tail[i] == 'P' && tail[i + 1] == 'K' && tail[i + 2] == 5 && tail[i + 3] == 6)
+            {
+                const uint8_t* eocd = tail.data() + i;
+                const uint32_t entries = Read16(eocd + 10);
+                const uint64_t cdOffset = Read32(eocd + 16);
+                const uint32_t cdSize = Read32(eocd + 12);
+                if (entries == 0xFFFF || cdOffset == 0xFFFFFFFF) return NotIso(error);
+                return OpenEntry(path, cdOffset, cdSize, entries, error);
+            }
+            if (i == 0) break;
+        }
+        return NotIso(error);
+    }
+
+    uint64_t Size() const { return data_ ? size_ : 0; }
+    bool Read(uint64_t offset, void* out, size_t len) const
+    {
+        if (!data_ || offset + len > size_) return false;
+        memcpy(out, data_ + offset, len);
+        return true;
+    }
+    bool IsZip() const { return data_ != nullptr; }
+    const std::string& ExtractedName() const { return name_; }
+
+private:
+    static bool NotIso(std::string& error)
+    {
+        error = "That ZIP does not contain a Wii disc image; put the ISO in the ZIP (or pick the ISO).";
+        return false;
+    }
+    static uint32_t Crc32(const uint8_t* data, size_t size)
+    {
+        static const auto table = [] {
+            std::array<uint32_t, 256> t{};
+            for (uint32_t n = 0; n < 256; n++)
+            {
+                uint32_t c = n;
+                for (int k = 0; k < 8; k++) c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+                t[n] = c;
+            }
+            return t;
+        }();
+        uint32_t c = 0xFFFFFFFFu;
+        for (size_t i = 0; i < size; i++) c = table[(c ^ data[i]) & 0xFF] ^ (c >> 8);
+        return c ^ 0xFFFFFFFFu;
+    }
+    static uint16_t Read16(const uint8_t* p) { return (uint16_t)(p[0] | (p[1] << 8)); }
+    static uint32_t Read32(const uint8_t* p) { return p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
+    static bool ReadFileRange(const fs::path& path, uint64_t offset, void* out, size_t len)
+    {
+        FILE* f = fopen(path.string().c_str(), "rb");
+        if (!f) return false;
+        const bool ok = fseeko(f, (off_t)offset, SEEK_SET) == 0 && fread(out, 1, len, f) == len;
+        fclose(f);
+        return ok;
+    }
+
+    bool OpenEntry(const fs::path& path, uint64_t cdOffset, uint32_t cdSize, uint32_t entries, std::string& error)
+    {
+        std::vector<uint8_t> cd(cdSize);
+        if (!ReadFileRange(path, cdOffset, cd.data(), cd.size())) return NotIso(error);
+        const uint8_t* p = cd.data();
+        const uint8_t* end = cd.data() + cd.size();
+        int found = 0;
+        for (uint32_t n = 0; n < entries; n++)
+        {
+            if (p + 46 > end || Read32(p) != 0x02014B50) return NotIso(error);
+            const uint16_t method = Read16(p + 10);
+            const uint32_t csize = Read32(p + 20), usize = Read32(p + 24);
+            const uint16_t nameLen = Read16(p + 28), extraLen = Read16(p + 30), commentLen = Read16(p + 32);
+            const uint32_t localOffset = Read32(p + 42);
+            const uint16_t flags = Read16(p + 8);
+            if (p + 46 + nameLen + extraLen + commentLen > end) return NotIso(error);
+            std::string name((const char*)p + 46, nameLen);
+            if (!name.empty() && name.back() != '/' && LooksLikeDisc(name))
+            {
+                found++;
+                if (found > 1)
+                {
+                    error = "That ZIP contains more than one disc image; keep only your PAL SNCP8P ISO in it.";
+                    return false;
+                }
+                if (!Extract(path, method, Read32(p + 16), localOffset, csize, usize, flags, name, error)) return false;
+            }
+            p += 46 + nameLen + extraLen + commentLen;
+        }
+        if (found != 1)
+        {
+            error = "That ZIP does not contain a Wii disc image; put the ISO in the ZIP (or pick the ISO).";
+            return false;
+        }
+        return true;
+    }
+
+    static bool LooksLikeDisc(const std::string& name)
+    {
+        std::string lower;
+        for (char c : name) lower += (char)std::tolower((unsigned char)c);
+        for (const char* ext : { ".iso", ".wbfs", ".wia", ".gcz", ".rvz" })
+            if (lower.size() > strlen(ext) && lower.compare(lower.size() - strlen(ext), strlen(ext), ext) == 0) return true;
+        return false;
+    }
+
+    bool Extract(const fs::path& path, uint16_t method, uint32_t crc, uint32_t localOffset, uint32_t csize,
+                 uint32_t usize, uint16_t flags, const std::string& name, std::string& error)
+    {
+        if (flags & 1)
+        {
+            error = "That ZIP is encrypted; re-create it without a password and try again.";
+            return false;
+        }
+        if (method != 0 && method != 8)
+        {
+            error = "That ZIP uses an unsupported compression method (stored and deflate work).";
+            return false;
+        }
+        if (usize == 0 || usize > kMaxZipEntry)
+        {
+            error = "That ZIP's disc image is a suspicious size; extract the ISO and pick it instead.";
+            return false;
+        }
+        // The local header repeats the name and extra-field lengths, which differ from the
+        // central directory's, so the data offset has to come from there.
+        uint8_t local[30];
+        if (!ReadFileRange(path, localOffset, local, sizeof(local)) || Read32(local) != 0x04034B50)
+        {
+            error = "That ZIP could not be unpacked (it may be damaged); extract the ISO and pick it instead.";
+            return false;
+        }
+        const uint64_t dataOffset = (uint64_t)localOffset + 30 + Read16(local + 26) + Read16(local + 28);
+
+        std::vector<uint8_t> deflated(csize);
+        if (csize && !ReadFileRange(path, dataOffset, deflated.data(), deflated.size()))
+        {
+            error = "That ZIP could not be unpacked (it may be damaged); extract the ISO and pick it instead.";
+            return false;
+        }
+
+        data_ = (uint8_t*)malloc(usize);
+        if (!data_)
+        {
+            error = "Not enough memory to unpack the ZIP. Extract the ISO and pick it instead.";
+            return false;
+        }
+        size_ = usize;
+        name_ = name;
+        if (method == 0)
+        {
+            if (csize != usize || Crc32(deflated.data(), usize) != crc)
+            {
+                error = "That ZIP could not be unpacked (it may be damaged); extract the ISO and pick it instead.";
+                return false;
+            }
+            memcpy(data_, deflated.data(), usize);
+            return true;
+        }
+        std::vector<uint8_t> inflated;
+        inflated.reserve(usize);
+        // A stream damaged inside its payload still inflates, to the right length, as garbage; only
+        // the CRC catches that, and catching it here turns a confusing "not a disc" into "damaged".
+        if (!Inflate_Raw(deflated.data(), deflated.size(), inflated) || inflated.size() != usize ||
+            Crc32(inflated.data(), inflated.size()) != crc)
+        {
+            error = "That ZIP could not be unpacked (it may be damaged); extract the ISO and pick it instead.";
+            return false;
+        }
+        memcpy(data_, inflated.data(), usize);
+        return true;
+    }
+
+    uint8_t* data_ = nullptr;
+    uint64_t size_ = 0;
+    std::string name_;
+};
+
 // ------------------------------------------------------------------ the image
+// A disc image as the rest of the installer sees it: random access, but it may be a plain file or
+// a ZIP entry unpacked in memory.
 class Image
 {
 public:
-    bool Open(const fs::path& path)
+    // A ZIP is detected by its end record rather than by extension: downloads get renamed, and a
+    // plain ISO whose name ends in .zip must still work. Only a ZIP that fails to yield an image
+    // sets `error`; a plain file leaves it alone so the caller can report the usual message.
+    bool Open(const fs::path& path, std::string& error)
     {
+        if (ZipImage::LooksLikeZip(path))
+        {
+            if (!zip_.Open(path, error)) return false;
+            size_ = zip_.Size();
+            return size_ >= kUnencryptedSize;
+        }
         f_ = fopen(path.string().c_str(), "rb");
         if (!f_) return false;
         fseeko(f_, 0, SEEK_END);
@@ -111,13 +350,16 @@ public:
     bool Read(uint64_t offset, void* out, size_t len)
     {
         if (offset + len > size_) return false;
+        if (zip_.IsZip()) return zip_.Read(offset, out, len);
         if (fseeko(f_, (off_t)offset, SEEK_SET) != 0) return false;
         return fread(out, 1, len, f_) == len;
     }
+    bool IsZip() const { return zip_.IsZip(); }
 
 private:
     FILE* f_ = nullptr;
     uint64_t size_ = 0;
+    ZipImage zip_;
 };
 
 // Decrypted view of a Wii partition: presents the partition's data as if the hashes were not
@@ -337,7 +579,8 @@ bool Keys_ReadCommonKey(const std::filesystem::path& keysFile, int index, uint8_
 std::string IsoInstall_GameId(const std::filesystem::path& image, bool* needsKey)
 {
     Image img;
-    if (!img.Open(image)) return {};
+    std::string ignored;   // a ZIP that cannot be unpacked is simply not a readable disc here
+    if (!img.Open(image, ignored)) return {};
     uint8_t header[0x20];
     if (!img.Read(0, header, sizeof(header))) return {};
     if (needsKey)
@@ -357,9 +600,11 @@ IsoInstallResult IsoInstall_Run(const IsoInstallOptions& options, IsoInstallProg
     auto fail = [&](IsoInstallResult r) { return r; };
 
     Image image;
-    if (!image.Open(options.image))
+    if (!image.Open(options.image, error))
     {
-        error = "The disc image could not be opened. Use a plain ISO of your own PAL copy.";
+        // Image::Open sets `error` when it understood the input but could not use it (a ZIP without
+        // exactly one image, or one it could not unpack); otherwise the input is not a disc image.
+        if (error.empty()) error = "The disc image could not be opened. Use your own PAL copy as an ISO or ZIP.";
         return fail(IsoInstallResult::OpenFailed);
     }
     status("Checking the disc header…");

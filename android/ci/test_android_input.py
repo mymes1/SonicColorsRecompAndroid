@@ -38,8 +38,12 @@ int main() {
     assert(Pad_Read(0, s) && s.buttons == 0 && s.lx == 0);
 }
 ''')
+            # android_app_stub.cpp is the host fallback for the JNI bridge: input.cpp calls
+            # androidapp::Vibrate/CancelVibration, which only a device can implement.
             subprocess.run(['g++', '-std=c++20', '-pthread', '-I', str(ROOT),
-                            str(ROOT / 'runtime/platform/android/input.cpp'), str(temp / 'test.cpp'),
+                            str(ROOT / 'runtime/platform/android/input.cpp'),
+                            str(ROOT / 'runtime/platform/android/android_app_stub.cpp'),
+                            str(temp / 'test.cpp'),
                             '-o', str(temp / 'test')], check=True)
             subprocess.run([str(temp / 'test')], check=True)
 

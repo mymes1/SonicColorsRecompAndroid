@@ -116,6 +116,7 @@ set(SCR_RUNTIME_ANDROID
     runtime/platform/android/app.cpp
     runtime/platform/android/audio_out.cpp
     runtime/platform/android/crash.cpp
+    runtime/platform/android/deflate.cpp
     runtime/platform/android/desktop_stubs.cpp
     runtime/platform/android/fiber.cpp
     runtime/platform/android/image.cpp
@@ -144,7 +145,8 @@ set(SCR_RUNTIME_ANDROID
 #       Music Library tab and its VGMStream tool discovery (nlohmann/json + subprocesses).
 #   runtime/install/install.cpp
 #       The desktop/CI installer, which links nod (a Rust library) and reads RVZ/WIA/WBFS/CISO/GCZ
-#       images. iso_install.cpp is the on-device installer and handles ISO only. The rest of the
+#       images. iso_install.cpp is the on-device installer and handles a plain ISO, or a ZIP
+#       holding one (deflate.cpp is its inflater). The rest of the
 #       directory (releases, verify) is built: the release table and the SHA-1 check of the
 #       installed main.dol are what AndroidMain uses to decide whether the data is usable.
 #   runtime/main.cpp, runtime/platform/run_process.cpp

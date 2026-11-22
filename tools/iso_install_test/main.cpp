@@ -330,6 +330,113 @@ Disc MakeDisc(const char* gameId, const char* dolSeed)
     return d;
 }
 
+// ---------------------------------------------------------------- ZIP container for the tests
+// A ZIP with the entries given, stored (method 0) or deflated (method 8). Only what the installer
+// reads is written: local headers, one central directory, the end record, no data descriptors.
+// Building the archive here keeps the test independent of a system zip tool, and lets it produce
+// the malformed cases (two images, no image, a damaged payload) a player can run into.
+struct ZipEntry
+{
+    std::string name;
+    std::vector<uint8_t> data;
+    bool deflate = false;
+};
+
+std::vector<uint8_t> DeflateStored(const std::vector<uint8_t>& data)
+{
+    // Stored (uncompressed) DEFLATE blocks: no Huffman coding, so a decoder must handle them. The
+    // length is 16-bit, so anything larger has to be split across blocks.
+    std::vector<uint8_t> out;
+    for (size_t pos = 0; pos < data.size();)
+    {
+        const size_t n = std::min<size_t>(data.size() - pos, 65535);
+        const bool last = pos + n == data.size();
+        out.push_back(last ? 0x01 : 0x00);   // BFINAL, BTYPE=00
+        out.push_back((uint8_t)(n & 0xFF));
+        out.push_back((uint8_t)(n >> 8));
+        out.push_back((uint8_t)(~n & 0xFF));
+        out.push_back((uint8_t)((~n >> 8) & 0xFF));
+        out.insert(out.end(), data.begin() + pos, data.begin() + pos + n);
+        pos += n;
+    }
+    if (data.empty()) out.insert(out.end(), { 0x01, 0, 0, 0xFF, 0xFF });
+    return out;
+}
+
+uint32_t Crc32Of(const std::vector<uint8_t>& data)
+{
+    // zlib's CRC-32, as every ZIP stores it; the installer verifies it on the way out.
+    static uint32_t table[256];
+    static bool built = false;
+    if (!built)
+    {
+        for (uint32_t n = 0; n < 256; n++)
+        {
+            uint32_t c = n;
+            for (int k = 0; k < 8; k++) c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+            table[n] = c;
+        }
+        built = true;
+    }
+    uint32_t c = 0xFFFFFFFFu;
+    for (uint8_t b : data) c = table[(c ^ b) & 0xFF] ^ (c >> 8);
+    return c ^ 0xFFFFFFFFu;
+}
+
+void PutLE16(std::vector<uint8_t>& v, uint16_t x) { v.push_back((uint8_t)x); v.push_back((uint8_t)(x >> 8)); }
+void PutLE32(std::vector<uint8_t>& v, uint32_t x)
+{
+    v.push_back((uint8_t)x); v.push_back((uint8_t)(x >> 8)); v.push_back((uint8_t)(x >> 16)); v.push_back((uint8_t)(x >> 24));
+}
+
+std::vector<uint8_t> MakeZip(const std::vector<ZipEntry>& entries)
+{
+    std::vector<uint8_t> out, central;
+    for (const ZipEntry& e : entries)
+    {
+        std::vector<uint8_t> body = e.deflate ? DeflateStored(e.data) : e.data;
+        const uint32_t offset = (uint32_t)out.size();
+        PutLE32(out, 0x04034B50);
+        PutLE16(out, 20);                       // version needed
+        PutLE16(out, 0);                        // flags
+        PutLE16(out, e.deflate ? 8 : 0);        // method
+        PutLE16(out, 0); PutLE16(out, 0);       // time, date
+        PutLE32(out, Crc32Of(e.data));
+        PutLE32(out, (uint32_t)body.size());
+        PutLE32(out, (uint32_t)e.data.size());
+        PutLE16(out, (uint16_t)e.name.size());
+        PutLE16(out, 0);                        // extra
+        out.insert(out.end(), e.name.begin(), e.name.end());
+        out.insert(out.end(), body.begin(), body.end());
+
+        PutLE32(central, 0x02014B50);
+        PutLE16(central, 20); PutLE16(central, 20);   // made by, version needed
+        PutLE16(central, 0);                          // flags
+        PutLE16(central, e.deflate ? 8 : 0);
+        PutLE16(central, 0); PutLE16(central, 0);
+        PutLE32(central, Crc32Of(e.data));
+        PutLE32(central, (uint32_t)body.size());
+        PutLE32(central, (uint32_t)e.data.size());
+        PutLE16(central, (uint16_t)e.name.size());
+        PutLE16(central, 0); PutLE16(central, 0);     // extra, comment
+        PutLE16(central, 0);                          // disk
+        PutLE16(central, 0);                          // internal attrs
+        PutLE32(central, 0);                          // external attrs
+        PutLE32(central, offset);
+        central.insert(central.end(), e.name.begin(), e.name.end());
+    }
+    const uint32_t cdOffset = (uint32_t)out.size();
+    out.insert(out.end(), central.begin(), central.end());
+    PutLE32(out, 0x06054B50);
+    PutLE16(out, 0); PutLE16(out, 0);
+    PutLE16(out, (uint16_t)entries.size());
+    PutLE16(out, (uint16_t)entries.size());
+    PutLE32(out, (uint32_t)central.size());
+    PutLE32(out, cdOffset);
+    PutLE16(out, 0);   // comment length
+    return out;
+}
+
 void CheckTree(const fs::path& dest, const Disc& d)
 {
     CHECK(fs::exists(dest / "sys" / "boot.bin"));
@@ -513,6 +620,88 @@ int main()
         CHECK(result == IsoInstallResult::Canceled);
         CHECK(!fs::exists(dest));
         CHECK(!fs::exists(fs::path(dest.string() + ".partial")));
+    }
+
+
+    // ---- a ZIP around the ISO installs the same way (what a player usually has)
+    {
+        const Disc disc = MakeDisc("SNCP8P", "F");
+        const BuiltImage image = BuildImage(disc, titleKey, commonKey, false, "SNCP8P");
+        g_dolHash = DolSha1(disc.dol);
+        IsoInstall_SetExpectedDolHashForTest(g_dolHash.c_str());
+        for (bool deflate : { false, true })
+        {
+            const fs::path zip = dir / (deflate ? "disc-deflate.zip" : "disc-stored.zip");
+            WriteAll(zip, MakeZip({ { "Sonic Colors (PAL)/disc.iso", image.bytes, deflate } }));
+            bool needsKey = true;
+            CHECK(IsoInstall_GameId(zip, &needsKey) == "SNCP8P");
+            CHECK(!needsKey);
+            const fs::path dest = dir / (deflate ? "data-zip-deflate" : "data-zip-stored");
+            Run run = Install(zip, dest, {});
+            if (run.result != IsoInstallResult::Ok)
+                fprintf(stderr, "zip install failed (%s): %s\n", deflate ? "deflate" : "stored", run.error.c_str());
+            CHECK(run.result == IsoInstallResult::Ok);
+            CheckTree(dest, disc);
+        }
+    }
+
+    // ---- ZIPs that cannot be used are refused with a player-readable reason, and write nothing
+    {
+        const Disc disc = MakeDisc("SNCP8P", "G");
+        const BuiltImage image = BuildImage(disc, titleKey, commonKey, false, "SNCP8P");
+        g_dolHash = DolSha1(disc.dol);
+        IsoInstall_SetExpectedDolHashForTest(g_dolHash.c_str());
+
+        // Two images in one archive: the installer would have to guess which one is the disc.
+        const fs::path two = dir / "two-isos.zip";
+        WriteAll(two, MakeZip({ { "a.iso", image.bytes }, { "b.iso", image.bytes } }));
+        Run run = Install(two, dir / "data-zip-two", {});
+        CHECK(run.result == IsoInstallResult::OpenFailed);
+        CHECK(run.error.find("more than one") != std::string::npos);
+        CHECK(!fs::exists(dir / "data-zip-two"));
+
+        // No disc image at all.
+        const fs::path empty = dir / "no-iso.zip";
+        WriteAll(empty, MakeZip({ { "readme.txt", { 'h', 'i' } } }));
+        run = Install(empty, dir / "data-zip-none", {});
+        CHECK(run.result == IsoInstallResult::OpenFailed);
+        CHECK(run.error.find("does not contain") != std::string::npos);
+
+        // A damaged stream: the headers claim the right sizes, the stream still decodes to that
+        // length, but its contents no longer match the stored CRC.
+        std::vector<uint8_t> broken = DeflateStored(image.bytes);
+        for (size_t i = 64; i < std::min<size_t>(broken.size(), 5000); i++) broken[i] ^= 0xFF;
+        std::vector<uint8_t> zipBytes;
+        PutLE32(zipBytes, 0x04034B50);
+        PutLE16(zipBytes, 20); PutLE16(zipBytes, 0); PutLE16(zipBytes, 8);
+        PutLE16(zipBytes, 0); PutLE16(zipBytes, 0);
+        PutLE32(zipBytes, Crc32Of(image.bytes));   // the CRC of what the archive claims to hold
+        PutLE32(zipBytes, (uint32_t)broken.size());
+        PutLE32(zipBytes, (uint32_t)image.bytes.size());
+        PutLE16(zipBytes, 10); PutLE16(zipBytes, 0);   // "broken.iso"
+        zipBytes.insert(zipBytes.end(), { 'b', 'r', 'o', 'k', 'e', 'n', '.', 'i', 's', 'o' });
+        zipBytes.insert(zipBytes.end(), broken.begin(), broken.end());
+        const uint32_t cdOffset = (uint32_t)zipBytes.size();
+        PutLE32(zipBytes, 0x02014B50);
+        PutLE16(zipBytes, 20); PutLE16(zipBytes, 20); PutLE16(zipBytes, 0); PutLE16(zipBytes, 8);
+        PutLE16(zipBytes, 0); PutLE16(zipBytes, 0); PutLE32(zipBytes, Crc32Of(image.bytes));
+        PutLE32(zipBytes, (uint32_t)broken.size());
+        PutLE32(zipBytes, (uint32_t)image.bytes.size());
+        PutLE16(zipBytes, 10); PutLE16(zipBytes, 0); PutLE16(zipBytes, 0);   // name, extra, comment
+        PutLE16(zipBytes, 0); PutLE16(zipBytes, 0); PutLE32(zipBytes, 0); PutLE32(zipBytes, 0);
+        zipBytes.insert(zipBytes.end(), { 'b', 'r', 'o', 'k', 'e', 'n', '.', 'i', 's', 'o' });
+        PutLE32(zipBytes, 0x06054B50);
+        PutLE16(zipBytes, 0); PutLE16(zipBytes, 0); PutLE16(zipBytes, 1); PutLE16(zipBytes, 1);
+        PutLE32(zipBytes, (uint32_t)(zipBytes.size() - cdOffset));
+        PutLE32(zipBytes, cdOffset);
+        PutLE16(zipBytes, 0);
+        const fs::path bad = dir / "broken.zip";
+        WriteAll(bad, zipBytes);
+        run = Install(bad, dir / "data-zip-broken", {});
+        CHECK(run.result == IsoInstallResult::OpenFailed);
+        CHECK(run.error.find("could not be unpacked") != std::string::npos);
+        CHECK(!fs::exists(dir / "data-zip-broken"));
+        CHECK(!fs::exists(fs::path((dir / "data-zip-broken").string() + ".partial")));
     }
 
     if (g_fail)

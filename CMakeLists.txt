@@ -138,11 +138,12 @@ if(WIN32 OR LINUX)
     endif()
 
     # The Android installer (runtime/platform/android/iso_install.cpp) reads disc images
-    # without nod, so it gets its own test against a synthetic disc image. Host build only:
-    # the same source is compiled into the APK for arm64.
+    # without nod, plain ISO or a ZIP around one, so it gets its own test against a synthetic
+    # disc image. Host build only: the same sources are compiled into the APK for arm64.
     add_executable(scr_iso_install_test EXCLUDE_FROM_ALL
         tools/iso_install_test/main.cpp
         runtime/platform/android/iso_install.cpp
+        runtime/platform/android/deflate.cpp
         runtime/platform/aes128.cpp
         runtime/platform/linux/sha1.cpp
         runtime/install/releases.cpp)
@@ -160,7 +161,8 @@ if(WIN32 OR LINUX)
     # checked against fixed pixel references generated independently by Python's zlib.
     add_executable(scr_image_test EXCLUDE_FROM_ALL
         tools/image_test/main.cpp
-        runtime/platform/android/image.cpp)
+        runtime/platform/android/image.cpp
+        runtime/platform/android/deflate.cpp)
     target_include_directories(scr_image_test PRIVATE runtime runtime/platform)
     target_compile_definitions(scr_image_test PRIVATE SCR_ANDROID)
     if(NOT WIN32)
