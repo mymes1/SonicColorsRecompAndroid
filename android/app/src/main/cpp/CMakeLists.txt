@@ -163,11 +163,14 @@ if(SCR_RUNTIME_ARCH_OK)
         ${SCR_RUNTIME_ANDROID}
         input_bridge.cpp)
 
+    # Vulkan: the NDK ships vulkan/vulkan.h and vulkan/vulkan_android.h for the API level being
+    # built, so the APK does not depend on external/vulkan-headers (which is fetched by
+    # tools/fetch_external.sh for the desktop build and the host checks). The runtime uses only the
+    # core 1.1 API and VK_EXT_debug_utils, none of which needs a newer header than the NDK's.
     target_include_directories(scr_runtime PRIVATE
         "${REPO_ROOT}"
         "${REPO_ROOT}/runtime"
-        "${ANDROID_DIR}"
-        "${REPO_ROOT}/external/vulkan-headers/include")
+        "${ANDROID_DIR}")
 
     # g_version, generated the same way as the desktop build so the log line names the build the
     # player is running (tools/version.cmake reads SCR_VERSION, else git describe).
