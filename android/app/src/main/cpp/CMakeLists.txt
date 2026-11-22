@@ -9,6 +9,8 @@ project(scr_android LANGUAGES CXX)
 #   libscr_recomp_code.so  the recompiled PPC code, only when SCR_COMPILE_GENERATED=ON
 
 get_filename_component(REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../.." ABSOLUTE)
+# TEMPORARY diagnostic
+message(WARNING "SCRDIAG REPO_ROOT=${REPO_ROOT} LIST_DIR=${CMAKE_CURRENT_LIST_DIR} SRC_DIR=${CMAKE_SOURCE_DIR} BIN_DIR=${CMAKE_BINARY_DIR} EXISTS=${CMAKE_CURRENT_LIST_DIR}/../../../..//runtime/cpu/cpu.cpp")
 set(ANDROID_DIR "${REPO_ROOT}/runtime/platform/android")
 
 # Same standard the desktop target uses. Exceptions stay on: the installer and the ISO reader use
