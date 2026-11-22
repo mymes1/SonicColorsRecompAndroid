@@ -129,6 +129,14 @@ Java_org_soniccolorsrecomp_android_AndroidInput_reset(JNIEnv*, jclass)
     AndroidInput_SetConnected(true);
 }
 
+// The mask the runtime is acting on, read back by the instrumentation test that checks that an
+// unplugged pad really does drop its held buttons (the state is recomposed on reconnect).
+extern "C" JNIEXPORT jint JNICALL
+Java_org_soniccolorsrecomp_android_AndroidInput_readButtonsForTest(JNIEnv*, jclass)
+{
+    return AndroidInput_Buttons();
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_org_soniccolorsrecomp_android_AndroidInput_controllerName(JNIEnv* env, jclass)
 {

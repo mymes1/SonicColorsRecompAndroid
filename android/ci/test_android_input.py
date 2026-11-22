@@ -32,6 +32,15 @@ int main() {
     assert(Pad_Read(0, s));
     assert(s.buttons == 0x2000 && s.lx == -32768 && s.ly == 32767);
     assert(s.rx == 32767 && s.ry == 0 && s.lt == 127 && s.rt == 255);
+    // What AndroidInput.readButtonsForTest() reports to the instrumentation test.
+    AndroidInput_Reset();
+    assert(AndroidInput_Buttons() == -1);
+    AndroidInput_SetConnected(true);
+    AndroidInput_SetButton(0x1000, true);
+    assert(AndroidInput_Buttons() == 0x1000);
+    AndroidInput_SetConnected(false);
+    AndroidInput_SetConnected(true);
+    assert(AndroidInput_Buttons() == 0);
     AndroidInput_SetConnected(false);
     assert(!Pad_Read(0, s) && Pad_Count() == 0 && s.buttons == 0);
     AndroidInput_SetConnected(true);

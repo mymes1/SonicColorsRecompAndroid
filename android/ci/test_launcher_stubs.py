@@ -75,6 +75,31 @@ class LauncherStubTests(unittest.TestCase):
         # And the member function that used to redeclare it just uses it now.
         self.assertNotRegex(text, r'\{\s*\n\s*extern bool g_gpuThread;')
 
+    def test_runtime_builds_for_the_emulator_abi_too(self):
+        """The instrumentation job runs on an x86_64 emulator; arm64-only would test nothing.
+
+        The switch is chosen per ABI, and the delivered APK stays arm64-v8a unless the job asks
+        for the test ABI.
+        """
+        cmake = CMAKE.read_text()
+        self.assertIn('ANDROID_ABI STREQUAL "x86_64"', cmake)
+        self.assertIn('runtime/platform/linux/fiber.cpp', cmake)
+        gradle = (ROOT / 'android/app/build.gradle').read_text()
+        self.assertIn("project.findProperty('testAbis')", gradle)
+        self.assertIn("['arm64-v8a']", gradle)
+
+    def test_the_native_libraries_may_be_absent(self):
+        """A missing library must be a no-op, not a crash in a class initializer."""
+        java = ROOT / 'android/app/src/main/java/org/soniccolorsrecomp/android'
+        for name in ('AndroidInput.java', 'NativeProbe.java', 'RecompCode.java'):
+            text = (java / name).read_text()
+            self.assertIn('UnsatisfiedLinkError', text, name)
+            self.assertNotIn('static { System.loadLibrary', text, name)
+        test = (ROOT / 'android/app/src/androidTest/java/org/soniccolorsrecomp/android'
+                / 'MainActivityTest.java').read_text()
+        # Skipped where the library is missing, so the run still reports the launcher tests.
+        self.assertIn('assumeTrue', test)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,6 +1,7 @@
 package org.soniccolorsrecomp.android;
 
 import static org.junit.Assert.*;
+import static org.junit.Assume.assumeTrue;
 
 import android.view.View;
 import android.view.ViewGroup;
@@ -30,10 +31,15 @@ public class MainActivityTest {
     }
 
     @Test public void optionalRecompLibraryMetadataLoads() {
-        if (BuildConfig.RECOMP_INCLUDED) assertEquals("SNCP8P", RecompCode.gameId());
+        if (!BuildConfig.RECOMP_INCLUDED) return;
+        assumeTrue("the recompiled-code library is only built for arm64-v8a", RecompCode.available());
+        assertEquals("SNCP8P", RecompCode.gameId());
     }
 
     @Test public void nativeControllerStateIsResetOnDisconnect() {
+        // This APK ships arm64-v8a only; an x86_64 emulator has no runtime library to test against.
+        assumeTrue("no native runtime for this ABI: " + AndroidInput.loadError(),
+                   AndroidInput.loadError() == null);
         AndroidInput.reset();
         assertEquals(-1, AndroidInput.readButtonsForTest());
         AndroidInput.setConnected(true);
@@ -46,6 +52,8 @@ public class MainActivityTest {
     }
 
     @Test public void nativeCpuPrimitivesWork() {
+        assumeTrue("no probe library for this ABI: " + NativeProbe.loadError(),
+                   NativeProbe.available());
         assertTrue(NativeProbe.checkCpuPrimitives());
     }
 

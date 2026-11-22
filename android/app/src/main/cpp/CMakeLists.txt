@@ -20,13 +20,20 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # ---------------------------------------------------------------- architecture
 if(ANDROID_ABI STREQUAL "arm64-v8a")
     set(SCR_RUNTIME_ARCH_OK TRUE)
+    set(SCR_FIBER_SOURCE "${ANDROID_DIR}/fiber.cpp")        # AArch64 context switch
+elseif(ANDROID_ABI STREQUAL "x86_64")
+    set(SCR_RUNTIME_ARCH_OK TRUE)
+    # The same System V x86-64 switch the desktop build uses; it only needs mmap/mprotect, which
+    # Android has. This exists so the instrumentation tests can run on an x86_64 emulator, which is
+    # the only kind a hosted runner can start; the shipped APK is arm64-v8a.
+    set(SCR_FIBER_SOURCE "${REPO_ROOT}/runtime/platform/linux/fiber.cpp")
+    message(STATUS "building the runtime for x86_64 (instrumentation testing only)")
 else()
     set(SCR_RUNTIME_ARCH_OK FALSE)
-    # The guest-thread fiber switch (runtime/platform/android/fiber.cpp) is AArch64 assembly and the
-    # runtime is only ever shipped for arm64-v8a, so the target below simply is not defined for any
-    # other ABI. The probe library still builds, which keeps a mismatched Gradle configuration from
-    # failing at the native step with an assembler error about `stp x19, x20`.
-    message(WARNING "libscr_runtime.so is arm64-v8a only (AArch64 fiber switch); "
+    # The guest-thread fiber switch is architecture-specific assembly, so the target below is not
+    # defined for any other ABI. The probe library still builds, which keeps a mismatched Gradle
+    # configuration from failing at the native step with an assembler error.
+    message(WARNING "libscr_runtime.so is arm64-v8a or x86_64 only (guest-thread fiber switch); "
                     "not building it for ${ANDROID_ABI}")
 endif()
 
@@ -127,7 +134,6 @@ set(SCR_RUNTIME_ANDROID
     ${REPO_ROOT}/runtime/platform/android/crash.cpp
     ${REPO_ROOT}/runtime/platform/android/deflate.cpp
     ${REPO_ROOT}/runtime/platform/android/desktop_stubs.cpp
-    ${REPO_ROOT}/runtime/platform/android/fiber.cpp
     ${REPO_ROOT}/runtime/platform/android/image.cpp
     ${REPO_ROOT}/runtime/platform/android/input.cpp
     ${REPO_ROOT}/runtime/platform/android/iso_install.cpp
@@ -174,6 +180,7 @@ if(SCR_RUNTIME_ARCH_OK)
     add_library(scr_runtime SHARED
         ${SCR_RUNTIME_CORE}
         ${SCR_RUNTIME_ANDROID}
+        ${SCR_FIBER_SOURCE}
         input_bridge.cpp)
     # The shared runtime refers to a few symbols that only generated/ defines. A launcher build has
     # no generated code, so it gets the empty-table / abort-on-call equivalents instead.

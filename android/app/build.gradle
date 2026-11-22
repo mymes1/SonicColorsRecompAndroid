@@ -14,10 +14,12 @@ android {
     defaultConfig {
         applicationId 'org.soniccolorsrecomp.android'
         buildConfigField 'boolean', 'RECOMP_INCLUDED', project.findProperty('compileGenerated') == 'true' ? 'true' : 'false'
-        // arm64 only: the guest-thread fiber switch is AArch64 assembly (runtime/platform/android/
-        // fiber.cpp), and src/main/cpp/CMakeLists.txt fails the build for any other ABI rather than
-        // linking a runtime that cannot switch guest threads.
-        ndk { abiFilters 'arm64-v8a' }
+        // arm64 only for what ships: the guest-thread fiber switch is AArch64 assembly
+        // (runtime/platform/android/fiber.cpp), and src/main/cpp/CMakeLists.txt refuses any ABI it
+        // has no switch for. The instrumentation job passes -PtestAbis=true to add x86_64, because
+        // a hosted runner can only start an x86_64 emulator.
+        ndk { abiFilters((project.findProperty('testAbis') == 'true'
+                ? ['arm64-v8a', 'x86_64'] : ['arm64-v8a']) as String[]) }
         externalNativeBuild {
             cmake { arguments "-DSCR_COMPILE_GENERATED=${project.findProperty('compileGenerated') == 'true' ? 'ON' : 'OFF'}" }
         }

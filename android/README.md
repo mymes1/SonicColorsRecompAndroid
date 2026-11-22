@@ -58,9 +58,18 @@ are ever uploaded.
 | `libscr_android_probe.so` | a tiny JNI metadata library, so an APK with a broken runtime still starts and explains itself |
 | `libscr_recomp_code.so` | only with `-PcompileGenerated=true`; see below |
 
-`libscr_runtime.so` is arm64-v8a only (its guest-thread fiber switch is AArch64 assembly) and needs
-`minSdk 26` (Vulkan is 24, AAudio 26, and there is no fallback for either). Other ABIs build just
-the probe library, with a warning rather than an assembler error.
+`libscr_runtime.so` needs `minSdk 26` (Vulkan is 24, AAudio 26, and there is no fallback for
+either). The APK ships arm64-v8a, whose guest-thread fiber switch is AArch64 assembly; an x86_64
+build uses the System V one from `runtime/platform/linux/fiber.cpp` and exists only so the
+instrumentation tests can run on the emulator a hosted runner can start
+(`gradle -PtestAbis=true`, which adds x86_64 to the APK). Other ABIs build just the probe library,
+with a warning rather than an assembler error.
+
+Because of that, the Java side never assumes a library is present: `AndroidInput`, `NativeProbe`
+and `RecompCode` catch `UnsatisfiedLinkError` when they load, make their entry points no-ops or
+return a neutral value, and expose the reason. The native instrumentation tests skip (rather than
+fail) where the library for the emulator's ABI does not exist, so a run of the launcher tests still
+reports what it checked.
 
 The source list, and the reason for everything excluded from it, is documented inline in
 `src/main/cpp/CMakeLists.txt`. In short: nothing that needs Dear ImGui, nlohmann/json, libarchive,
@@ -113,7 +122,7 @@ URL in a public workflow input. The download is limited, its digest is checked,
 and a ZIP member is streamed to a fixed filename rather than extracted by path.
 The job builds the existing host installer, validates the disc, extracts it,
 generates recompilation sources, then compiles and links them into the debug APK.
-The native libraries are arm64-v8a only, which is what the APK ships and what a
+The native libraries are arm64-v8a, which is what the APK ships and what a
 phone runs. The workflow uploads this
 APK as `sonic-colors-android-recompiled-code-preview` for one day after an
 x86_64 emulator metadata and launcher smoke test. It requires

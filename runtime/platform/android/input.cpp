@@ -52,6 +52,10 @@ void AndroidInput_Reset() {
     std::lock_guard<std::mutex> lock(mutex);
     state = {}; connected = false;
 }
+int AndroidInput_Buttons() {
+    std::lock_guard<std::mutex> lock(mutex);
+    return connected ? static_cast<int>(state.buttons) : -1;
+}
 bool Pad_Read(int index, PadState& out) {
     std::lock_guard<std::mutex> lock(mutex);
     if (index != 0 || !connected) { out = {}; return false; }

@@ -34,17 +34,70 @@ public final class AndroidInput {
 
     private static String connectedDevice = "";
 
+    /** Why the native bridge is unavailable, or null when it loaded. */
+    private static String loadError = null;
+
     private AndroidInput() {}
 
-    // Implemented in native/src/input_bridge.cpp; see the token table there.
-    public static native void setButton(int key, boolean down);
-    public static native void setStick(float x, float y);
-    public static native void setConnected(boolean connected);
-    public static native void reset();
-    public static native String controllerName();
-    public static native void vibrate(int ms);
+    /**
+     * The APK ships arm64-v8a only (the guest-thread switch is AArch64 assembly), so on an x86_64
+     * emulator this library does not exist. Every entry point below tolerates that: the launcher
+     * still runs, and the instrumentation test reports the missing ABI instead of every test
+     * failing with UnsatisfiedLinkError. The static initializer must never throw, or no test in
+     * this class (or any class that touches it) would even be reported.
+     */
+    static {
+        try {
+            System.loadLibrary("scr_runtime");
+        } catch (UnsatisfiedLinkError e) {
+            loadError = e.getMessage();
+        }
+    }
+
+    /** Null when the runtime library loaded, else why it did not. */
+    static String loadError() { return loadError; }
+
+    /** The button mask, or -1 when the bridge is unavailable. */
+    static native int readButtonsForTest();
+
+    // Implemented in native/src/input_bridge.cpp; see the token table there. The wrappers exist so
+    // a missing library is a no-op rather than an UnsatisfiedLinkError in the middle of a frame.
+    private static native void nativeSetButton(int key, boolean down);
+    private static native void nativeSetStick(float x, float y);
+    private static native void nativeSetConnected(boolean connected);
+    private static native void nativeReset();
+    private static native String nativeControllerName();
+    private static native void nativeVibrate(int ms);
+    private static native void nativeSetDeviceName(String name);
+
+    public static void setButton(int key, boolean down) {
+        if (loadError == null) nativeSetButton(key, down);
+    }
+
+    public static void setStick(float x, float y) {
+        if (loadError == null) nativeSetStick(x, y);
+    }
+
+    public static void setConnected(boolean connected) {
+        if (loadError == null) nativeSetConnected(connected);
+    }
+
+    public static void reset() {
+        if (loadError == null) nativeReset();
+    }
+
+    public static String controllerName() {
+        return loadError == null ? nativeControllerName() : connectedDevice;
+    }
+
+    public static void vibrate(int ms) {
+        if (loadError == null) nativeVibrate(ms);
+    }
+
     /** Names the pad in the log and the controller overlay. */
-    static native void setDeviceName(String name);
+    static void setDeviceName(String name) {
+        if (loadError == null) nativeSetDeviceName(name);
+    }
 
     static void press(int key) { setButton(key, true); }
     static void release(int key) { setButton(key, false); }

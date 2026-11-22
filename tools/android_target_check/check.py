@@ -42,6 +42,12 @@ EXCLUDED_PREFIXES = (
 SHARED_FILES = (
     "runtime/platform/linux/sha1.cpp",   # portable SHA-1, used by the installer and the verifier
 )
+# Chosen per ABI by the CMake file rather than named in a list: the guest-thread context switch is
+# AArch64 assembly for the shipped APK and the System V x86-64 one for the emulator build.
+PER_ABI_FILES = (
+    "runtime/platform/android/fiber.cpp",
+    "runtime/platform/linux/fiber.cpp",
+)
 EXCLUDED_FILES = (
     "runtime/main.cpp",
     "runtime/install_ui.cpp",
@@ -112,12 +118,12 @@ def main():
         return path in EXCLUDED_FILES or path.startswith(EXCLUDED_PREFIXES)
 
     for path in all_sources():
-        if path in listed or excluded(path):
+        if path in listed or path in PER_ABI_FILES or excluded(path):
             continue
         failures.append("in the tree but not in any list (add it, or exclude it on purpose): " + path)
 
     for path in listed:
-        if excluded(path):
+        if excluded(path) or path in PER_ABI_FILES:
             failures.append("listed but marked excluded: " + path)
 
     print("%d files listed (%d core + %d android)" % (len(listed), len(lists["SCR_RUNTIME_CORE"]),

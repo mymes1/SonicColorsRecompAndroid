@@ -27,8 +27,10 @@ jobs:
         run: sdkmanager 'platforms;android-35' 'ndk;26.3.11579264' 'cmake;3.22.1'
       # shaderc is not shipped prebuilt in the NDK; Google's guide is to build it once per NDK with
       # ndk-build. The Vulkan renderer compiles the GLSL it generates into SPIR-V on the device.
+      # The instrumentation job also builds the APK for x86_64 (the emulator's ABI), so it needs
+      # shaderc for both.
       - name: Build the NDK shaderc that the renderer needs
-        run: bash android/ci/build_shaderc.sh
+        run: SCR_SHADERC_ABIS="${{ contains(job.name, 'emulator') && 'arm64-v8a x86_64' || 'arm64-v8a' }}" bash android/ci/build_shaderc.sh
 
       - uses: gradle/actions/setup-gradle@v4
         with:
@@ -85,8 +87,10 @@ jobs:
         run: sdkmanager 'platforms;android-35' 'ndk;26.3.11579264' 'cmake;3.22.1'
       # shaderc is not shipped prebuilt in the NDK; Google's guide is to build it once per NDK with
       # ndk-build. The Vulkan renderer compiles the GLSL it generates into SPIR-V on the device.
+      # The instrumentation job also builds the APK for x86_64 (the emulator's ABI), so it needs
+      # shaderc for both.
       - name: Build the NDK shaderc that the renderer needs
-        run: bash android/ci/build_shaderc.sh
+        run: SCR_SHADERC_ABIS="${{ contains(job.name, 'emulator') && 'arm64-v8a x86_64' || 'arm64-v8a' }}" bash android/ci/build_shaderc.sh
 
       - uses: gradle/actions/setup-gradle@v4
         with:
@@ -103,7 +107,9 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
-          script: cd android && gradle --no-daemon connectedDebugAndroidTest
+          # -PtestAbis=true adds x86_64 to the APK: the emulator is x86_64, the shipped APK is
+          # arm64-v8a, and the two native tests skip (they do not fail) where the library is absent.
+          script: cd android && gradle --no-daemon -PtestAbis=true connectedDebugAndroidTest
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -134,8 +140,10 @@ jobs:
           sdkmanager 'platforms;android-35' 'ndk;26.3.11579264' 'cmake;3.22.1'
       # shaderc is not shipped prebuilt in the NDK; Google's guide is to build it once per NDK with
       # ndk-build. The Vulkan renderer compiles the GLSL it generates into SPIR-V on the device.
+      # The instrumentation job also builds the APK for x86_64 (the emulator's ABI), so it needs
+      # shaderc for both.
       - name: Build the NDK shaderc that the renderer needs
-        run: bash android/ci/build_shaderc.sh
+        run: SCR_SHADERC_ABIS="${{ contains(job.name, 'emulator') && 'arm64-v8a x86_64' || 'arm64-v8a' }}" bash android/ci/build_shaderc.sh
 
       - uses: gradle/actions/setup-gradle@v4
         with:
