@@ -11,10 +11,13 @@
 // launcher asks for a disc, which is the point); running the guest raises the unimplemented symbol
 // rather than continuing with wrong data. A build with SCR_COMPILE_GENERATED=ON provides the real
 // definitions and does not use this file.
+//
+// The include is spelled from this file because scr_runtime's include directories do not contain
+// runtime/cpu: the shared sources reach their own headers relatively.
 
 #include <cstdlib>
 
-#include "ppc_context.h"
+#include "../../../../../runtime/cpu/ppc_context.h"
 
 extern "C" {
 uint32_t g_ppcRelease = 0;

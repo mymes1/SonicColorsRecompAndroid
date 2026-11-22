@@ -8,6 +8,7 @@ anonymous-namespace linkage bug that made the symbols look undefined when they w
 """
 import pathlib
 import re
+import subprocess
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -26,6 +27,14 @@ class LauncherStubTests(unittest.TestCase):
         self.assertIn('PPC_GEN_FUNC(fn_803E19B0)', text)
         # The table must be empty: a release entry without its code would select and then crash.
         self.assertIn('{ nullptr }', text)
+
+    def test_stub_compiles_with_only_the_runtime_target_include_dirs(self):
+        """scr_runtime has no runtime/cpu include dir, so the header has to be spelled from here."""
+        done = subprocess.run(
+            ['g++', '-std=c++20', '-fsyntax-only', '-I', '.', '-I', 'runtime',
+             '-I', 'runtime/platform/android', '-include', 'runtime/platform/compat.h', str(STUBS)],
+            capture_output=True, text=True, cwd=str(ROOT))
+        self.assertEqual(done.returncode, 0, done.stderr[-2000:])
 
     def test_stub_does_not_invent_code(self):
         """Anything it cannot provide aborts; nothing returns a plausible-looking value."""
