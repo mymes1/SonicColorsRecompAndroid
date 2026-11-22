@@ -130,9 +130,21 @@ jobs:
 
       # Without generated sources this is the launcher: it installs the runtime and the player picks
       # their own disc on the device. This is the artifact to test the install flow with.
+      # --stacktrace and the conditional log dump: when a Gradle or CMake failure happens on a
+      # runner there is no way to reproduce it locally, so the run has to say why by itself.
       - name: Build the launcher APK (installs your own disc image)
         working-directory: android
-        run: gradle --no-daemon --max-workers 2 assembleDebug
+        run: gradle --no-daemon --max-workers 2 --stacktrace assembleDebug
+      - name: Show the Gradle and CMake logs
+        if: failure()
+        run: |
+          for log in android/app/build/outputs/logs/*.txt android/.gradle/*.log; do
+            [ -f "$log" ] && { echo "::group::$log"; tail -n 200 "$log"; echo '::endgroup::'; }
+          done
+          find android/.cxx -name '*.txt' -newermt '-30 minutes' 2>/dev/null | head -5 | while read -r f; do
+            echo "::group::$f"; tail -n 120 "$f"; echo '::endgroup::'
+          done
+          exit 0
 
       # arm64-v8a only, by design: the guest-thread fiber switch is AArch64 assembly. The runtime is
       # also the thing that must be there, since the APK still builds without it (only the small
