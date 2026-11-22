@@ -1,0 +1,233 @@
+name: Build playable Android APK from a disc link
+# One manual run does everything: install the toolchain, fetch and unpack the disc, and hand back a
+# debug APK you can install on your phone. The APK that is always produced installs the runtime but
+# contains no game code, so after installing it you choose your own ISO/ZIP on the device and the
+# installer extracts it (see android/README.md). With "include_game_code" the disc is additionally
+# recompiled and a second, playable APK is built.
+#
+# The disc link is a secret: a signed URL in a workflow input is visible in the run's event payload
+# and in this file's history, so prefer the DISC_URL/DISC_SHA256 repository secrets and leave the
+# input empty. The input exists for a quick one-off run.
+on:
+  workflow_dispatch:
+    inputs:
+      disc_url:
+        description: 'Optional: direct HTTPS link to your ISO or ZIP (leave empty to use the DISC_URL secret)'
+        type: string
+        required: false
+        default: ''
+      disc_sha256:
+        description: 'Optional: SHA-256 of that file; empty uses DISC_SHA256, then the digest of the download'
+        type: string
+        required: false
+        default: ''
+      include_game_code:
+        description: 'Also recompile the disc into a playable APK (needs a private repo and the disc to be SNCP8P)'
+        type: boolean
+        required: false
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: android-build-apk-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # The link is passed as an environment variable, never interpolated into a command line, so it
+      # cannot leak through a printed command or a shell history.
+      - name: Resolve the disc link
+        env:
+          INPUT_URL: ${{ inputs.disc_url }}
+          INPUT_SHA256: ${{ inputs.disc_sha256 }}
+          SECRET_URL: ${{ secrets.DISC_URL }}
+          SECRET_SHA256: ${{ secrets.DISC_SHA256 }}
+        run: |
+          set -eu
+          # An input or a secret that was never set arrives as an empty string; the := guards keep
+          # `set -u` happy regardless.
+          url="${INPUT_URL:-}"
+          [ -n "$url" ] || url="${SECRET_URL:-}"
+          sha="${INPUT_SHA256:-}"
+          [ -n "$sha" ] || sha="${SECRET_SHA256:-}"
+          if [ -z "$url" ]; then
+            echo '::error::No disc link. Put it in the disc_url input, or set the DISC_URL secret.'
+            exit 1
+          fi
+          case "$url" in
+            https://*) ;;
+            *) echo '::error::The disc link must start with https://' ; exit 1 ;;
+          esac
+          # One write per line, straight into the environment file: nothing here reaches the log.
+          echo "DISC_URL=$url" >> "$GITHUB_ENV"
+          echo "DISC_SHA256=$sha" >> "$GITHUB_ENV"
+          # Only the provenance is reported, never the link itself.
+          if [ "$url" = "${INPUT_URL:-}" ]; then echo "Disc link: the workflow input."; else echo "Disc link: the DISC_URL secret."; fi
+          if [ -n "$sha" ]; then echo "Digest: pinned."; else echo "Digest: not pinned, the download is hashed and reported."; fi
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake g++ python3
+          sdkmanager 'platforms;android-35' 'ndk;26.3.11579264' 'cmake;3.22.1'
+      # shaderc is not shipped prebuilt in the NDK; Google's guide is to build it once per NDK with
+      # ndk-build. The Vulkan renderer compiles the GLSL it generates into SPIR-V on the device.
+      # The instrumentation job also builds the APK for x86_64 (the emulator's ABI), so it needs
+      # shaderc for both.
+      - name: Build the NDK shaderc that the renderer needs
+        run: SCR_SHADERC_ABIS="${{ contains(job.name, 'emulator') && 'arm64-v8a x86_64' || 'arm64-v8a' }}" bash android/ci/build_shaderc.sh
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      # Cheap checks first: the disc is slow to fetch and expensive to unpack, so a broken helper or
+      # a broken installer should stop the run before any of that.
+      - name: Check the helper scripts
+        run: python3 -m unittest discover -s android/ci -p "test_*.py"
+
+      # Compiled straight with g++ rather than through the root CMake project: the tests only need
+      # the runtime sources, while configuring that project would drag in SDL and the rest of the
+      # desktop dependencies, none of which this job uses.
+      - name: Check the on-device installer and the PNG codec
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/scr-check"
+          g++ -std=c++20 -O1 -DSCR_ISO_INSTALL_TEST -pthread \
+            -Iruntime -Iruntime/platform -Iruntime/platform/android \
+            -include runtime/platform/compat.h \
+            tools/iso_install_test/main.cpp runtime/platform/android/iso_install.cpp \
+            runtime/platform/android/deflate.cpp runtime/platform/aes128.cpp \
+            runtime/platform/linux/sha1.cpp runtime/install/releases.cpp \
+            -o "$RUNNER_TEMP/scr-check/iso_install_test"
+          "$RUNNER_TEMP/scr-check/iso_install_test"
+          g++ -std=c++20 -O1 -DSCR_ANDROID \
+            -Iruntime -Iruntime/platform \
+            -include runtime/platform/compat.h \
+            tools/image_test/main.cpp runtime/platform/android/image.cpp \
+            runtime/platform/android/deflate.cpp -o "$RUNNER_TEMP/scr-check/image_test"
+          # The fixtures are generated, and looked up relative to the test's own directory.
+          python3 tools/image_test/fixtures/generate.py
+          (cd tools/image_test && "$RUNNER_TEMP/scr-check/image_test")
+          # std::format is hand-implemented for Android (NDK libc++ has none at minSdk 26), so the
+          # scripts it produces are tested on the host.
+          g++ -std=c++20 -O1 -Wall -Wextra -Iruntime \
+            tools/std_format_test/main.cpp -o "$RUNNER_TEMP/scr-check/std_format_test"
+          "$RUNNER_TEMP/scr-check/std_format_test"
+
+      - name: Download and validate the disc
+        run: python3 android/ci/download_disc.py "$RUNNER_TEMP/scr-disc"
+
+      # Printed so the link can be pinned with disc_sha256 next time; a digest is not a secret.
+      - name: Report the digest of the download and the unpacked image
+        run: |
+          sha256sum "$RUNNER_TEMP/scr-disc/download.bin" 2>/dev/null || true
+          sha256sum "$RUNNER_TEMP/scr-disc/disc.iso"
+          ls -l "$RUNNER_TEMP/scr-disc"
+
+      - name: Extract the disc
+        run: |
+          cmake -S android/ci/installer -B "$RUNNER_TEMP/scr-installer" -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/scr-installer" --parallel 2
+          "$RUNNER_TEMP/scr-installer/scr_install" "$RUNNER_TEMP/scr-disc/disc.iso"
+
+      # Without generated sources this is the launcher: it installs the runtime and the player picks
+      # their own disc on the device. This is the artifact to test the install flow with.
+      # --stacktrace and the conditional log dump: when a Gradle or CMake failure happens on a
+      # runner there is no way to reproduce it locally, so the run has to say why by itself.
+      - name: Build the launcher APK (installs your own disc image)
+        working-directory: android
+        run: gradle --no-daemon --max-workers 2 --stacktrace assembleDebug
+      - name: Show the Gradle and CMake logs
+        if: failure()
+        run: |
+          for log in android/app/build/outputs/logs/*.txt android/.gradle/*.log; do
+            [ -f "$log" ] && { echo "::group::$log"; tail -n 200 "$log"; echo '::endgroup::'; }
+          done
+          find android/.cxx -name '*.txt' -newermt '-30 minutes' 2>/dev/null | head -5 | while read -r f; do
+            echo "::group::$f"; tail -n 120 "$f"; echo '::endgroup::'
+          done
+          exit 0
+
+      # arm64-v8a only, by design: the guest-thread fiber switch is AArch64 assembly. The runtime is
+      # also the thing that must be there, since the APK still builds without it (only the small
+      # probe library would be packaged) and that APK cannot install anything.
+      - name: Verify the launcher APK contains the native runtime
+        run: |
+          python3 - <<'PYCODE'
+          import zipfile
+          apk = 'android/app/build/outputs/apk/debug/app-debug.apk'
+          with zipfile.ZipFile(apk) as archive:
+              names = set(archive.namelist())
+          required = ['lib/arm64-v8a/libscr_runtime.so', 'lib/arm64-v8a/libscr_android_probe.so']
+          missing = [name for name in required if name not in names]
+          if missing:
+              raise SystemExit(f'Missing from the APK: {missing}')
+          size = sum(i.file_size for i in zipfile.ZipFile(apk).infolist()) >> 20
+          print(f'launcher APK packages the native runtime ({size} MiB unpacked)')
+          PYCODE
+
+      - name: Upload the launcher APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonic-colors-launcher-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      # Optional second half: the disc's code, recompiled. Everything below writes game-derived files,
+      # so it is refused outside a private repository and cleaned up even when the run fails.
+      - name: Refuse game-derived code outside a private repository
+        if: inputs.include_game_code && github.event.repository.private != true
+        run: |
+          echo '::error::include_game_code was set, but this repository is public: the result would contain game-derived code.' >&2
+          exit 1
+
+      - name: Generate the recompiled sources from the disc
+        if: inputs.include_game_code
+        run: python3 tools/build_generated.py
+
+      - name: Build the playable APK (disc code included)
+        if: inputs.include_game_code
+        working-directory: android
+        run: gradle --no-daemon --max-workers 2 -PcompileGenerated=true assembleDebug
+
+      - name: Verify the playable APK contains both libraries
+        if: inputs.include_game_code
+        run: |
+          python3 - <<'PYCODE'
+          import zipfile
+          apk = 'android/app/build/outputs/apk/debug/app-debug.apk'
+          with zipfile.ZipFile(apk) as archive:
+              names = set(archive.namelist())
+          for lib in ('libscr_runtime.so', 'libscr_recomp_code.so'):
+              if f'lib/arm64-v8a/{lib}' not in names:
+                  raise SystemExit(f'Missing lib/arm64-v8a/{lib}')
+          print('playable APK packages the runtime and the recompiled code')
+          PYCODE
+
+      - name: Upload the playable APK
+        if: inputs.include_game_code
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonic-colors-playable-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 3
+
+      # Always: the disc, its unpacked data and the generated sources must not survive the run, not
+      # even as a cache entry.
+      - name: Remove the disc, extracted data and generated sources
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/scr-disc" "$RUNNER_TEMP/scr-installer" "$RUNNER_TEMP/scr-check" game generated
+          rm -f "$RUNNER_TEMP"/scr-disc* 2>/dev/null || true
