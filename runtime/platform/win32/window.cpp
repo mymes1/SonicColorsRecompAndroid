@@ -6,7 +6,9 @@
 #include "../../version.h"
 
 #include <atomic>
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 #include <string>
 #include <string_view>
 #include <thread>

@@ -8,7 +8,9 @@
 
 #include <dlfcn.h>
 
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 #include <functional>
 #include <mutex>
 #include <type_traits>

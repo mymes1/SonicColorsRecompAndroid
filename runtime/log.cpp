@@ -4,7 +4,9 @@
 
 #include <cstdlib>
 #include <filesystem>
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 #include <mutex>
 
 namespace fs = std::filesystem;

@@ -3,7 +3,9 @@
 #include "shadergen.h"
 #include "vertex_loader.h"
 
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 
 static void W(std::string& s, const std::string& t) { s += t; }
 

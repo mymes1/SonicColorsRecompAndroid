@@ -30,6 +30,10 @@
 #include <ctime>
 #include <strings.h>
 
+// std::format is not available in the NDK's libc++ at the API level the APK targets; this provides
+// the subset the runtime uses. Must come last, after <string> and friends are in place.
+#include "android/std_format.h"
+
 #ifndef __forceinline
 #define __forceinline inline __attribute__((always_inline))
 #endif

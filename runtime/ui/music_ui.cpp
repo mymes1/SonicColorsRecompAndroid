@@ -23,7 +23,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 #include <fstream>
 #include <mutex>
 #include <stdexcept>

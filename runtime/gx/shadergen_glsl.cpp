@@ -6,7 +6,9 @@
 #include "shadergen_glsl.h"
 #include "vertex_loader.h"
 
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 
 namespace
 {

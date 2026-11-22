@@ -4,7 +4,9 @@
 #include "../../version.h"
 
 #include <cstdio>
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 #include <functional>
 #include <vector>
 #include <windows.h>

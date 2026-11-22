@@ -10,7 +10,9 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 #include <fstream>
 #include <sstream>
 #include <vector>

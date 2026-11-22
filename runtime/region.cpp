@@ -3,7 +3,9 @@
 #include "log.h"
 
 #include <algorithm>
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 
 extern const PPCRegionCode* const g_ppcRegionCode[];   // generated/ppc_regions.cpp
 

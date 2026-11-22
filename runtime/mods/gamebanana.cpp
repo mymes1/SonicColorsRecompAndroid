@@ -5,7 +5,9 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 
 using json = nlohmann::json;
 

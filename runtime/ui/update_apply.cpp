@@ -4,7 +4,9 @@
 #include <archive_entry.h>
 
 #include <cstdio>
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 #include <fstream>
 #include <string>
 #include <string_view>

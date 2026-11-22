@@ -33,7 +33,9 @@
 #include <chrono>
 #include <cstdlib>
 #include <d3dcompiler.h>
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 #include <unordered_map>
 #include <vector>
 

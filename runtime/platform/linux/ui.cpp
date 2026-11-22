@@ -16,7 +16,9 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 #include <mutex>
 #include <string>
 #include <vector>

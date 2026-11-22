@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 #include <string>
 #include <vector>
 

@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdio>
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 #include <string>
 
 void Log_Open(const char* path);

@@ -6,7 +6,9 @@
 #include "../../log.h"
 #include "../../ui/overlay.h"
 
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 #include <mutex>
 #include <string>
 

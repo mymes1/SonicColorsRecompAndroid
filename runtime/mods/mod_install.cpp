@@ -11,7 +11,9 @@
 #include <chrono>
 #include <cstdio>
 #include <ctime>
-#include <format>
+#ifndef __ANDROID__
+#include <format>   // on Android, platform/compat.h provides it
+#endif
 #include <fstream>
 #include <map>
 #include <set>
