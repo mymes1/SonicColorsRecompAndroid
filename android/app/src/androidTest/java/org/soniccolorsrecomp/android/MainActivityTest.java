@@ -49,25 +49,49 @@ public class MainActivityTest {
         assertTrue(NativeProbe.checkCpuPrimitives());
     }
 
-    @Test public void launcherAndControlEditorAreAvailable() {
+    /**
+     * The launcher as a player first meets it: the title, the disc picker, the key-file row (a
+     * retail ISO cannot be installed without it), a Play button that stays disabled until data is
+     * installed, and the settings page. These are the strings MainActivity actually sets; when one
+     * of them changes this test should change with it rather than pass on a stale label.
+     */
+    @Test public void launcherOffersWhatAPlayerNeeds() {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             scenario.onActivity(activity -> {
                 View root = activity.getWindow().getDecorView();
-                assertNotNull(findText(root, "Choose Wii ISO or ZIP"));
-                Button play = (Button) findText(root, "Play (runtime unavailable)");
+                assertNotNull(findText(root, "SONIC COLORS"));
+                assertNotNull(findText(root, "Choose your disc image\u2026"));
+                assertNotNull(findText(root, "Provide keys.txt (only needed for an encrypted ISO)"));
+                TextView keys = findTextStartingWith(root, "Key file:");
+                assertNotNull("the key-file state is not shown", keys);
+                Button play = (Button) findText(root, "Play");
                 assertNotNull(play);
-                assertFalse(play.isEnabled());
-                Button arrange = (Button) findText(root, "Arrange touch controls");
-                assertNotNull(arrange);
-                arrange.performClick();
+                assertFalse("Play must wait for installed data", play.isEnabled());
+                Button settings = (Button) findText(root, "Controller & touch settings");
+                assertNotNull(settings);
+                settings.performClick();
                 root = activity.getWindow().getDecorView();
-                assertNotNull(findText(root, "Stick"));
-                assertNotNull(findText(root, "A"));
-                Button done = (Button) findText(root, "Done");
-                assertNotNull(done);
-                done.performClick();
-                assertNotNull(findText(activity.getWindow().getDecorView(), "Choose Wii ISO or ZIP"));
+                assertNotNull(findText(root, "Movement input"));
+                assertNotNull(findText(root, "Rearrange touch controls"));
+                Button back = (Button) findText(root, "Back");
+                assertNotNull(back);
+                back.performClick();
+                assertNotNull(findText(activity.getWindow().getDecorView(), "Choose your disc image\u2026"));
             });
         }
+    }
+
+    private static TextView findTextStartingWith(View view, String prefix) {
+        if (view instanceof TextView && ((TextView) view).getText().toString().startsWith(prefix)) {
+            return (TextView) view;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                TextView result = findTextStartingWith(group.getChildAt(i), prefix);
+                if (result != null) return result;
+            }
+        }
+        return null;
     }
 }
