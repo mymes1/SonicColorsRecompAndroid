@@ -77,6 +77,9 @@ bash tools/fetch_external.sh                    # Vulkan/SPIR-V headers, not che
 python3 tools/android_target_check/check.py --link
 ```
 
+The APK build uses the NDK's own Vulkan and shaderc headers, so `external/` is not needed for it;
+that tree is for the desktop build and the host checks above.
+
 The link check needs stand-ins for the NDK's own headers (`jni.h`, `aaudio/AAudio.h`, `android/*.h`,
 `shaderc/shaderc.h`, `sys/system_properties.h`), which are host-only test fixtures and not checked
 in. What it does not prove: that those match the real NDK headers, that shaderc compiles the
