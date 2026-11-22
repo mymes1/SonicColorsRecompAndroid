@@ -208,12 +208,33 @@ if(SCR_RUNTIME_ARCH_OK)
     # configure step with a clear message instead of the link.
     find_library(SCR_VULKAN_LIB vulkan REQUIRED)
     find_library(SCR_AAUDIO_LIB aaudio REQUIRED)
-    # shaderc: renderer_vk.cpp compiles the generated GLSL at run time. The NDK ships both the
-    # headers (sources/third_party/shaderc/include) and the library, but the include directory is
-    # only added by linking the library, so this replaces the desktop build's external/ copy.
-    find_library(SCR_SHADERC_LIB shaderc REQUIRED)
+    # shaderc: renderer_vk.cpp compiles the GLSL it generates into SPIR-V on the device, and there
+    # is no alternative in the runtime (the desktop renderer goes through d3dcompiler/HLSL).
+    #
+    # The NDK used to ship shaderc prebuilt and this target assumed it did; r27 deleted it, headers
+    # and libraries alike (sources/third_party/shaderc no longer exists), so a plain build fails to
+    # find <shaderc/shaderc.h>. Vendoring is the fix, and until then the configure step says so
+    # plainly instead of failing 200 files later with a missing header.
+    find_library(SCR_SHADERC_LIB shaderc)
+    if(NOT SCR_SHADERC_LIB)
+        find_path(SCR_SHADERC_INCLUDE shaderc/shaderc.h)
+    endif()
+    if(NOT SCR_SHADERC_LIB AND NOT SCR_SHADERC_INCLUDE)
+        message(FATAL_ERROR
+            "shaderc is not available in this NDK (${ANDROID_NDK}) and nothing provides it.\n"
+            "The Vulkan renderer compiles its generated GLSL with shaderc at run time. NDK r27 "
+            "removed the prebuilt library and its headers. Install an NDK that still has it "
+            "(r26 and older) or add shaderc to the build and pass -DSCR_SHADERC_LIB=... "
+            "-DSCR_SHADERC_INCLUDE=... .")
+    endif()
+    if(SCR_SHADERC_LIB)
+        target_link_libraries(scr_runtime PRIVATE ${SCR_SHADERC_LIB})
+    endif()
+    if(SCR_SHADERC_INCLUDE)
+        target_include_directories(scr_runtime PRIVATE ${SCR_SHADERC_INCLUDE})
+    endif()
     target_link_libraries(scr_runtime PRIVATE
-        android log jnigraphics ${SCR_VULKAN_LIB} ${SCR_AAUDIO_LIB} ${SCR_SHADERC_LIB})
+        android log jnigraphics ${SCR_VULKAN_LIB} ${SCR_AAUDIO_LIB})
 endif()   # SCR_RUNTIME_ARCH_OK
 
 # ---------------------------------------------------------------- recompiled guest code

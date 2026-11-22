@@ -12,7 +12,7 @@ shipped: the installer reads the image the player selects, on the device.
 
 ## Building
 
-JDK 17, Gradle 8.9, Android SDK platform 35, NDK 27.2.12479018 and Android SDK CMake 3.22.1:
+JDK 17, Gradle 8.9, Android SDK platform 35, NDK 26.3.11579264 and Android SDK CMake 3.22.1:
 
 ```sh
 cd android
@@ -79,6 +79,15 @@ python3 tools/android_target_check/check.py --link
 
 The APK build uses the NDK's own Vulkan and shaderc headers, so `external/` is not needed for it;
 that tree is for the desktop build and the host checks above.
+
+### Why the NDK is pinned to r26
+
+`renderer_vk.cpp` generates GLSL per GX state key and compiles it on the device with shaderc; that
+is the only shader compiler the Vulkan renderer has (the desktop renderer uses HLSL and
+`d3dcompiler`). NDK r27 removed shaderc completely — headers and prebuilt libraries — so r26 is the
+last NDK in which the APK can build. The CMake file fails the configure step with that explanation
+if a newer NDK is used, rather than reporting a missing `shaderc/shaderc.h`. Moving to r27+ needs
+shaderc vendored into the build (or GLSL compiled to SPIR-V ahead of time); neither is done yet.
 
 The link check needs stand-ins for the NDK's own headers (`jni.h`, `aaudio/AAudio.h`, `android/*.h`,
 `shaderc/shaderc.h`, `sys/system_properties.h`), which are host-only test fixtures and not checked
