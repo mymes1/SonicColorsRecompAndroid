@@ -41,6 +41,8 @@ add_library(scr_android_probe SHARED
     "${ANDROID_DIR}/memory.cpp")
 target_compile_features(scr_android_probe PRIVATE cxx_std_20)
 target_compile_definitions(scr_android_probe PRIVATE SCR_ANDROID)
+target_compile_options(scr_android_probe PRIVATE
+    -include ${REPO_ROOT}/runtime/platform/compat.h)   # shared sources; see scr_runtime below
 target_link_libraries(scr_android_probe PRIVATE android log)
 target_include_directories(scr_android_probe PRIVATE
     "${REPO_ROOT}/runtime/cpu"
@@ -190,7 +192,12 @@ if(SCR_RUNTIME_ARCH_OK)
     add_dependencies(scr_runtime scr_version)
 
     target_compile_definitions(scr_runtime PRIVATE SCR_ANDROID)
+    # runtime/platform/compat.h is force-included into every shared source, exactly as the desktop
+    # build and the host tests do: the shared code uses MSVC's _byteswap_*, _rotl and the *_s
+    # functions, which it defines for other compilers. Without it the NDK reports every one of
+    # them as "use of undeclared identifier".
     target_compile_options(scr_runtime PRIVATE
+        -include ${REPO_ROOT}/runtime/platform/compat.h
         -Wall -Wextra -Wno-unused-parameter
         -fno-strict-aliasing)   # guest memory is aliased through several views; TBAA breaks that
 

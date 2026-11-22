@@ -11,7 +11,7 @@
 #include <android/log.h>
 
 #include "input.h"
-#include "gamepad.h"
+#include "input/gamepad.h"   // runtime/input, from the include path; it is not a sibling file
 #include "platform/input.h"
 
 #include <string>
