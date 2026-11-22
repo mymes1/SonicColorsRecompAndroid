@@ -70,6 +70,33 @@ class WorkflowGuardTests(unittest.TestCase):
                 self.assertNotRegex(stripped, r'^echo\s+"?\$?\{?DISC_URL',
                                     f'step "{step.get("name")}" would print the disc link')
 
+    def test_a_usable_launcher_apk_is_always_the_result(self):
+        """One manual run has to hand back an installable APK even with no disc at all.
+
+        The launcher APK contains no game code, so nothing about it depends on the disc the run
+        downloaded: the artifact is produced by a step that is not gated on include_game_code.
+        """
+        uploads = [s for s in self.steps if str(s.get('uses', '')).startswith('actions/upload-artifact')]
+        launcher = [s for s in uploads if s['with']['name'] == 'sonic-colors-launcher-apk']
+        self.assertEqual(len(launcher), 1, 'the launcher APK must be uploaded')
+        self.assertNotIn('include_game_code', str(launcher[0].get('if', '')),
+                         'the launcher APK must not depend on the disc-derived build')
+
+    def test_the_link_and_the_build_are_separate_steps(self):
+        """A bad link should stop the run before the 20-minute native build, not after it."""
+        runs = [str(s.get('run', '')) for s in self.steps]
+        download = [i for i, r in enumerate(runs) if 'download_disc.py' in r]
+        builds = [i for i, r in enumerate(runs) if 'gradlew' in r or 'gradle ' in r]
+        self.assertTrue(download and builds)
+        self.assertLess(min(download), min(builds), 'the disc must be fetched before the APK is built')
+
+    def test_the_link_is_optional_and_falls_back_to_the_secret(self):
+        inputs = self.on['workflow_dispatch']['inputs']
+        self.assertFalse(inputs['disc_url'].get('required', False))
+        resolve = [str(s.get('run', '')) for s in self.steps if 'GITHUB_ENV' in str(s.get('run', ''))]
+        self.assertTrue(any('DISC_URL' in r for r in resolve),
+                        'the input has to be able to fall back to the DISC_URL secret')
+
     def test_digest_is_optional_but_verified_when_pinned(self):
         resolve = [s for s in self.steps if 'DISC_SHA256' in str(s.get('env', {}))]
         self.assertTrue(resolve, 'the digest has to reach the download step')
