@@ -25,6 +25,29 @@ It does not build or ship the game. Run it from **Actions → Android launcher p
 workflow**. A successful build or smoke test confirms the launcher and those primitives, not game
 compatibility.
 
+### One run from a disc link to an installable APK
+
+**Actions → Build playable Android APK from a disc link → Run workflow** is the end-to-end path:
+
+1. give a direct `https://` link to your ISO or to a ZIP holding one (`disc_url`), or leave it empty
+   to use the `DISC_URL` repository secret;
+2. the run installs the toolchain, checks the installer and codec, downloads and validates the
+   disc, and extracts it;
+3. it builds the debug APK and uploads it as **`sonic-colors-launcher-apk`**.
+
+That APK is the one to test with: install it, open it, tap **Choose your disc image…**, pick your
+own ISO or ZIP on the phone, and it extracts the game there. It contains no game data, so it can be
+built from any repository and is not limited to one disc.
+
+`disc_sha256` pins the download (empty falls back to `DISC_SHA256`, and if neither is set the run
+reports the digest it saw so the next run can be pinned). A link typed into the input is part of the
+run's stored event payload, so a signed or private URL belongs in the secret instead.
+
+Setting `include_game_code` additionally recompiles the disc into a playable APK
+(`sonic-colors-playable-apk`). That half produces game-derived code, so it is refused unless the
+repository is private, and it is removed from the runner on success and on failure alike. Only APKs
+are ever uploaded.
+
 ### Native targets
 
 `src/main/cpp/CMakeLists.txt` produces:
@@ -68,8 +91,9 @@ ISO or ZIP. Then select **prepare_game** in Run workflow. Do not put a private
 URL in a public workflow input. The download is limited, its digest is checked,
 and a ZIP member is streamed to a fixed filename rather than extracted by path.
 The job builds the existing host installer, validates the disc, extracts it,
-generates recompilation sources, then compiles and links them into native Android
-libraries for arm64-v8a and x86_64 inside a debug APK. The workflow uploads this
+generates recompilation sources, then compiles and links them into the debug APK.
+The native libraries are arm64-v8a only, which is what the APK ships and what a
+phone runs. The workflow uploads this
 APK as `sonic-colors-android-recompiled-code-preview` for one day after an
 x86_64 emulator metadata and launcher smoke test. It requires
 a private repository because the APK contains game-derived code; it does not
@@ -87,13 +111,19 @@ and linking generated code is not equivalent to running the game on Android.
 
 ## What the runtime expects at run time
 
-* The installer (`runtime/platform/android/iso_install.cpp`) reads the selected ISO and writes the
-  layout the shared runtime already uses: `sys/{boot,bi2,apploader,main.dol,fst}.bin`,
+* The installer (`runtime/platform/android/iso_install.cpp`) reads the selected plain ISO, or a ZIP
+  holding exactly one (stored or deflated), and writes the layout the shared runtime already uses: `sys/{boot,bi2,apploader,main.dol,fst}.bin`,
   `ticket/tmd/cert/h3.bin`, `disc/{header,region,unencrypted}.bin`, `files/…`. A player-supplied
   `keys.txt` (their own console's common key) is needed for an encrypted retail image; an already
-  decrypted image needs none. No key material is in the APK.
+  decrypted image needs none. No key material is in the APK: **Provide keys.txt** in the launcher
+  copies the file the player owns into the app's files directory, which is where the native side
+  looks for it.
+* A ZIP is checked before it is used: an archive with two disc images, no disc image, an encrypted
+  entry, an unsupported compression method or a stream that fails its CRC-32 is refused with a
+  message saying what to do, and nothing is written.
 * RVZ/WIA/WBFS/CISO/GCZ are **not** supported on device: those decoders are in nod, which is a Rust
-  library the APK does not ship. Use an ISO.
+  library the APK does not ship. The picker says so before copying anything. Convert to an ISO (or
+  a ZIP of one) first.
 * Guest memory uses a 4 GiB reservation with `memfd_create` (`runtime/platform/android/memory.cpp`),
   falling back to shared anonymous mappings when the kernel refuses.
 

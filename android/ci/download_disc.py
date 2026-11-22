@@ -3,6 +3,10 @@
 
 The URL comes from an environment variable to avoid putting it in shell command
 lines or workflow inputs. No downloaded bytes are published as workflow artifacts.
+
+DISC_SHA256 is optional. When it is set, the download must match it before anything
+is unpacked. When it is empty, the download's own SHA-256 is printed instead: a
+digest is not a secret, so printing it lets the next run pin the link.
 """
 import hashlib
 import os
@@ -45,7 +49,8 @@ def copy_bounded(src, dst, limit, hasher=None):
 def prepare(url, expected_hash, output_dir):
     if urllib.parse.urlsplit(url).scheme.lower() != "https":
         raise DiscInputError("Disc URL must use HTTPS")
-    if len(expected_hash) != 64 or any(c not in '0123456789abcdefABCDEF' for c in expected_hash):
+    if expected_hash and (len(expected_hash) != 64
+                          or any(c not in '0123456789abcdefABCDEF' for c in expected_hash)):
         raise DiscInputError("DISC_SHA256 must be a 64-character SHA-256 digest")
     output_dir.mkdir(parents=True, exist_ok=True)
     download = output_dir / "download.bin"
@@ -55,8 +60,14 @@ def prepare(url, expected_hash, output_dir):
     with opener.open(urllib.request.Request(url, headers={'User-Agent': 'SCR-Android-CI'}), timeout=60) as response:
         with download.open('wb') as out:
             copy_bounded(response, out, MAX_DOWNLOAD, digest)
-    if digest.hexdigest().lower() != expected_hash.lower():
-        raise DiscInputError("Downloaded file SHA-256 does not match DISC_SHA256")
+    actual = digest.hexdigest().lower()
+    if expected_hash:
+        if actual != expected_hash.lower():
+            raise DiscInputError("Downloaded file SHA-256 does not match DISC_SHA256")
+    else:
+        # Reported, not enforced: the operator can paste it into DISC_SHA256 or the
+        # disc_sha256 input so later runs are pinned.
+        print(f"Downloaded file SHA-256: {actual} (no digest was pinned)")
     if zipfile.is_zipfile(download):
         with zipfile.ZipFile(download) as archive:
             candidates = [x for x in archive.infolist() if not x.is_dir() and x.filename.lower().endswith('.iso')]

@@ -36,6 +36,23 @@ class DownloadTests(unittest.TestCase):
     def test_wrong_region(self):
         with self.assertRaises(ValueError): self.run_data(b'SNCE8Ptest')
 
+    def test_unpinned_digest_is_accepted_and_reported(self):
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, 'w') as z:
+            z.writestr('game.iso', b'SNCP8Ptest')
+        with tempfile.TemporaryDirectory() as temp:
+            import contextlib
+            out = io.StringIO()
+            with patch.object(disc.urllib.request, 'build_opener', return_value=FakeOpener(data.getvalue())), \
+                 contextlib.redirect_stdout(out):
+                path = disc.prepare('https://example.invalid/game', '', Path(temp))
+            self.assertEqual(path.read_bytes(), b'SNCP8Ptest')
+            self.assertIn(hashlib.sha256(data.getvalue()).hexdigest(), out.getvalue())
+
+    def test_pinned_digest_still_enforced(self):
+        with self.assertRaises(ValueError):
+            self.run_data(b'SNCP8Ptest', 'a' * 64)
+
     def test_zip_with_multiple_isos_rejected(self):
         data = io.BytesIO()
         with zipfile.ZipFile(data, 'w') as z:
