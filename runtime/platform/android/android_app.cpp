@@ -15,6 +15,7 @@
 #include "../../config.h"
 #include "../../install/releases.h"
 #include "../../install/verify.h"
+#include "../../audio/audio_out.h"
 #include "../../log.h"
 #include "../../platform/platform.h"
 
@@ -428,14 +429,12 @@ Java_org_soniccolorsrecomp_android_NativeRunner_nativeSurfaceCreated(JNIEnv* env
 extern "C" JNIEXPORT void JNICALL
 Java_org_soniccolorsrecomp_android_NativeRunner_nativePause(JNIEnv*, jclass)
 {
-    extern void AudioOut_SetSuspended(bool);
     AudioOut_SetSuspended(true);
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_org_soniccolorsrecomp_android_NativeRunner_nativeResume(JNIEnv*, jclass)
 {
-    extern void AudioOut_SetSuspended(bool);
     AudioOut_SetSuspended(false);
 }
 

@@ -48,6 +48,17 @@ class LauncherStubTests(unittest.TestCase):
         self.assertLess(text.index('option(SCR_COMPILE_GENERATED'), text.index('no_generated.cpp'))
         self.assertRegex(text, r'if\(NOT SCR_COMPILE_GENERATED\)\s*\n\s*target_sources\(scr_runtime PRIVATE no_generated\.cpp\)')
 
+    def test_audio_suspend_is_declared_through_its_header(self):
+        """A block-scope declaration inside an extern "C" JNI function takes C linkage.
+
+        android_app.cpp declaring AudioOut_SetSuspended inside its extern "C" JNI entry points
+        named a C symbol, while audio_out.cpp defines the C++ one, so the link failed with
+        "undefined symbol: AudioOut_SetSuspended" and "did you mean to declare ... as extern C".
+        """
+        text = (ROOT / 'runtime/platform/android/android_app.cpp').read_text()
+        self.assertIn('#include "../../audio/audio_out.h"', text)
+        self.assertNotIn('extern void AudioOut_SetSuspended', text)
+
     def test_gpu_thread_is_declared_at_file_scope(self):
         """An extern inside the anonymous namespace names a hidden symbol nothing defines.
 
