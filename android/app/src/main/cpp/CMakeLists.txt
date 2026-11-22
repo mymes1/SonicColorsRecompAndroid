@@ -9,8 +9,6 @@ project(scr_android LANGUAGES CXX)
 #   libscr_recomp_code.so  the recompiled PPC code, only when SCR_COMPILE_GENERATED=ON
 
 get_filename_component(REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../.." ABSOLUTE)
-# TEMPORARY diagnostic
-message(WARNING "SCRDIAG REPO_ROOT=${REPO_ROOT} LIST_DIR=${CMAKE_CURRENT_LIST_DIR} SRC_DIR=${CMAKE_SOURCE_DIR} BIN_DIR=${CMAKE_BINARY_DIR} EXISTS=${CMAKE_CURRENT_LIST_DIR}/../../../..//runtime/cpu/cpu.cpp")
 set(ANDROID_DIR "${REPO_ROOT}/runtime/platform/android")
 
 # Same standard the desktop target uses. Exceptions stay on: the installer and the ISO reader use
@@ -52,84 +50,91 @@ target_include_directories(scr_android_probe PRIVATE
 # ---------------------------------------------------------------- the runtime's source set
 # Explicit lists rather than a GLOB: the Android build excludes whole subsystems, and which
 # files are in and out is a deliberate decision (see the notes under each list).
+#
+# Every entry is written as ${REPO_ROOT}/... because this file lives in android/app/src/main/cpp:
+# CMake resolves a relative source path against this file's directory, not the repository root, so
+# a bare `runtime/cpu/cpu.cpp` is looked for at src/main/cpp/runtime/cpu/cpu.cpp and the configure
+# step fails with "Cannot find source file".
 set(SCR_RUNTIME_CORE
     # CPU, memory, HLE
-    runtime/cpu/cpu.cpp
-    runtime/cpu/interpreter.cpp
-    runtime/kernel/boot.cpp
-    runtime/kernel/crash.cpp
-    runtime/kernel/hle_os.cpp
-    runtime/kernel/scheduler.cpp
-    runtime/kernel/threads.cpp
-    runtime/hw/dsp.cpp
-    runtime/hw/exi.cpp
-    runtime/hw/hollywood.cpp
-    runtime/hw/mmio.cpp
-    runtime/hw/si.cpp
-    runtime/hw/vi.cpp
+    ${REPO_ROOT}/runtime/cpu/cpu.cpp
+    ${REPO_ROOT}/runtime/cpu/interpreter.cpp
+    ${REPO_ROOT}/runtime/kernel/boot.cpp
+    ${REPO_ROOT}/runtime/kernel/crash.cpp
+    ${REPO_ROOT}/runtime/kernel/hle_os.cpp
+    ${REPO_ROOT}/runtime/kernel/scheduler.cpp
+    ${REPO_ROOT}/runtime/kernel/threads.cpp
+    ${REPO_ROOT}/runtime/hw/dsp.cpp
+    ${REPO_ROOT}/runtime/hw/exi.cpp
+    ${REPO_ROOT}/runtime/hw/hollywood.cpp
+    ${REPO_ROOT}/runtime/hw/mmio.cpp
+    ${REPO_ROOT}/runtime/hw/si.cpp
+    ${REPO_ROOT}/runtime/hw/vi.cpp
     # IOS and the disc/filesystem view
-    runtime/ios/dev_di.cpp
-    runtime/ios/dev_es.cpp
-    runtime/ios/dev_fs.cpp
-    runtime/ios/disc.cpp
-    runtime/ios/fs_atomic.cpp
-    runtime/ios/ios.cpp
-    runtime/ios/nand_autosave.cpp
+    ${REPO_ROOT}/runtime/ios/dev_di.cpp
+    ${REPO_ROOT}/runtime/ios/dev_es.cpp
+    ${REPO_ROOT}/runtime/ios/dev_fs.cpp
+    ${REPO_ROOT}/runtime/ios/disc.cpp
+    ${REPO_ROOT}/runtime/ios/fs_atomic.cpp
+    ${REPO_ROOT}/runtime/ios/ios.cpp
+    ${REPO_ROOT}/runtime/ios/nand_autosave.cpp
     # graphics, shared with the desktop backends
-    runtime/gx/gx_fifo.cpp
-    runtime/gx/hires.cpp
-    runtime/gx/shadergen.cpp
-    runtime/gx/shadergen_glsl.cpp
-    runtime/gx/texture_decode.cpp
-    runtime/gx/vertex_loader.cpp
+    ${REPO_ROOT}/runtime/gx/gx_fifo.cpp
+    ${REPO_ROOT}/runtime/gx/hires.cpp
+    ${REPO_ROOT}/runtime/gx/shadergen.cpp
+    ${REPO_ROOT}/runtime/gx/shadergen_glsl.cpp
+    ${REPO_ROOT}/runtime/gx/texture_decode.cpp
+    ${REPO_ROOT}/runtime/gx/vertex_loader.cpp
     # audio
-    runtime/audio/ax.cpp
-    runtime/audio/dsp_coef.cpp
-    runtime/audio/music_manifest.cpp
-    runtime/audio/music_mod.cpp
-    runtime/audio/music_sprintf_hle.cpp
-    runtime/audio/music_tool.cpp
-    runtime/audio/wav_file.cpp
+    ${REPO_ROOT}/runtime/audio/ax.cpp
+    ${REPO_ROOT}/runtime/audio/dsp_coef.cpp
+    ${REPO_ROOT}/runtime/audio/music_manifest.cpp
+    ${REPO_ROOT}/runtime/audio/music_mod.cpp
+    ${REPO_ROOT}/runtime/audio/music_sprintf_hle.cpp
+    ${REPO_ROOT}/runtime/audio/music_tool.cpp
+    ${REPO_ROOT}/runtime/audio/wav_file.cpp
     # input
-    runtime/input/gamepad.cpp
-    runtime/input/input_debug.cpp
-    runtime/input/motion.cpp
-    runtime/input/pad_hle.cpp
-    runtime/input/wpad_hle.cpp
+    ${REPO_ROOT}/runtime/input/gamepad.cpp
+    ${REPO_ROOT}/runtime/input/input_debug.cpp
+    ${REPO_ROOT}/runtime/input/motion.cpp
+    ${REPO_ROOT}/runtime/input/pad_hle.cpp
+    ${REPO_ROOT}/runtime/input/wpad_hle.cpp
     # everything else
-    runtime/config.cpp
-    runtime/log.cpp
-    runtime/mods/mods.cpp
-    runtime/net/http.cpp
-    runtime/perf.cpp
-    runtime/platform/aes128.cpp
+    ${REPO_ROOT}/runtime/config.cpp
+    ${REPO_ROOT}/runtime/log.cpp
+    ${REPO_ROOT}/runtime/mods/mods.cpp
+    ${REPO_ROOT}/runtime/net/http.cpp
+    ${REPO_ROOT}/runtime/perf.cpp
+    ${REPO_ROOT}/runtime/platform/aes128.cpp
     # Release table (SNCP8P) + SHA-1 gate for an installed copy, and the SHA-1 itself. These
     # three are nod-free; runtime/install/install.cpp (the desktop installer) is not built.
-    runtime/install/releases.cpp
-    runtime/install/verify.cpp
-    runtime/platform/linux/sha1.cpp
-    runtime/region.cpp
-    runtime/tas/tas.cpp)
+    ${REPO_ROOT}/runtime/install/releases.cpp
+    ${REPO_ROOT}/runtime/install/verify.cpp
+    ${REPO_ROOT}/runtime/platform/linux/sha1.cpp
+    ${REPO_ROOT}/runtime/region.cpp
+    ${REPO_ROOT}/runtime/tas/tas.cpp)
+
 
 # Android implementations of the platform interfaces. These replace runtime/platform/{win32,linux}
 # and are the only ones the runtime links against.
 set(SCR_RUNTIME_ANDROID
-    runtime/platform/android/android_app.cpp
-    runtime/platform/android/app.cpp
-    runtime/platform/android/audio_out.cpp
-    runtime/platform/android/crash.cpp
-    runtime/platform/android/deflate.cpp
-    runtime/platform/android/desktop_stubs.cpp
-    runtime/platform/android/fiber.cpp
-    runtime/platform/android/image.cpp
-    runtime/platform/android/input.cpp
-    runtime/platform/android/iso_install.cpp
-    runtime/platform/android/memory.cpp
-    runtime/platform/android/platform.cpp
-    runtime/platform/android/renderer_vk.cpp
-    runtime/platform/android/video.cpp
-    runtime/platform/android/video_swapchain.cpp
-    runtime/platform/android/vk_context.cpp)
+    ${REPO_ROOT}/runtime/platform/android/android_app.cpp
+    ${REPO_ROOT}/runtime/platform/android/app.cpp
+    ${REPO_ROOT}/runtime/platform/android/audio_out.cpp
+    ${REPO_ROOT}/runtime/platform/android/crash.cpp
+    ${REPO_ROOT}/runtime/platform/android/deflate.cpp
+    ${REPO_ROOT}/runtime/platform/android/desktop_stubs.cpp
+    ${REPO_ROOT}/runtime/platform/android/fiber.cpp
+    ${REPO_ROOT}/runtime/platform/android/image.cpp
+    ${REPO_ROOT}/runtime/platform/android/input.cpp
+    ${REPO_ROOT}/runtime/platform/android/iso_install.cpp
+    ${REPO_ROOT}/runtime/platform/android/memory.cpp
+    ${REPO_ROOT}/runtime/platform/android/platform.cpp
+    ${REPO_ROOT}/runtime/platform/android/renderer_vk.cpp
+    ${REPO_ROOT}/runtime/platform/android/video.cpp
+    ${REPO_ROOT}/runtime/platform/android/video_swapchain.cpp
+    ${REPO_ROOT}/runtime/platform/android/vk_context.cpp)
+
 
 # Deliberately not built, with the reason each one is out:
 #   runtime/gx/renderer.cpp, runtime/gx/video.cpp, runtime/gx/dxbc_fixup.cpp

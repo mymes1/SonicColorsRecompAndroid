@@ -74,7 +74,10 @@ def cmake_lists():
                     body.append(stripped)
                 if closed:
                     break
-            found[var] = [p for p in body if p.endswith(".cpp")]
+            # Entries are written as ${REPO_ROOT}/runtime/... : CMake resolves a relative source
+            # path against the CMakeLists' own directory, which is not the repository root. The
+            # check compares repository-relative paths, so the prefix is stripped here.
+            found[var] = [p.replace("${REPO_ROOT}/", "") for p in body if p.endswith(".cpp")]
             break
         else:
             sys.exit("check.py: cannot find set(%s) in %s" % (var, CMAKE))
