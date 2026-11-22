@@ -64,11 +64,14 @@ class ShadercBuildTests(unittest.TestCase):
 
 @unittest.skipUnless(yaml is not None, 'PyYAML required to read the workflow')
 class ShadercWorkflowTests(unittest.TestCase):
-    WORKFLOWS = [ROOT / '.github/workflows/android-build-apk.yml',
+    WORKFLOWS = [ROOT / '.github/workflows/build.yml',
                  ROOT / '.github/workflows/android-apk.yml']
 
     def test_every_apk_build_builds_shaderc_before_gradle(self):
         for workflow in self.WORKFLOWS:
+            if workflow.name == 'build.yml':
+                # Renamed before; a missing file here means this test stopped checking anything.
+                self.assertTrue(workflow.is_file(), f'{workflow} is missing')
             if not workflow.is_file():
                 continue
             document = yaml.safe_load(workflow.read_text())

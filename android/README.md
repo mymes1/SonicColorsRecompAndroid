@@ -31,9 +31,11 @@ compatibility.
 
 1. give a direct `https://` link to your ISO or to a ZIP holding one (`disc_url`), or leave it empty
    to use the `DISC_URL` repository secret;
-2. the run installs the toolchain, checks the installer and codec, downloads and validates the
-   disc, and extracts it;
-3. it builds the debug APK and uploads it as **`sonic-colors-launcher-apk`**.
+2. the run installs the toolchain, builds the APK and uploads it as
+   **`sonic-colors-launcher-apk`** — before it looks at the disc at all, because that APK needs
+   none of it;
+3. only then does it download the disc (with progress, a stall limit and a time limit of its own),
+   validate and extract it.
 
 That APK is the one to test with: install it, open it, tap **Choose your disc image…**, pick your
 own ISO or ZIP on the phone, and it extracts the game there. It contains no game data, so it can be
@@ -42,6 +44,15 @@ built from any repository and is not limited to one disc.
 `disc_sha256` pins the download (empty falls back to `DISC_SHA256`, and if neither is set the run
 reports the digest it saw so the next run can be pinned). A link typed into the input is part of the
 run's stored event payload, so a signed or private URL belongs in the secret instead.
+
+The download step reports what it is doing, because a silent one cannot be told apart from a hung
+one: the host it is fetching from, the size once the server answers, then a line per 10%, then the
+unpacking. It gives up on its own and names the cause — `the server answered HTTP 403; the link is
+not usable (expired, wrong, or not shared)`, `the download made no progress for 90 seconds`, or
+`did not finish within the time budget` — and never prints the URL, since a signed link is a secret.
+A transfer that was interrupted resumes from what it already received (the runner disk keeps it
+between attempts in the same job), and a 4xx is not retried. The step also has a 55-minute limit of
+its own, so a slow host cannot consume the whole job.
 
 Setting `include_game_code` additionally recompiles the disc into a playable APK
 (`sonic-colors-playable-apk`). That half produces game-derived code, so it is refused unless the

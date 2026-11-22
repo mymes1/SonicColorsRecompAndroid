@@ -124,24 +124,10 @@ jobs:
             tools/std_format_test/main.cpp -o "$RUNNER_TEMP/scr-check/std_format_test"
           "$RUNNER_TEMP/scr-check/std_format_test"
 
-      - name: Download and validate the disc
-        run: python3 android/ci/download_disc.py "$RUNNER_TEMP/scr-disc"
-
-      # Printed so the link can be pinned with disc_sha256 next time; a digest is not a secret.
-      - name: Report the digest of the download and the unpacked image
-        run: |
-          sha256sum "$RUNNER_TEMP/scr-disc/download.bin" 2>/dev/null || true
-          sha256sum "$RUNNER_TEMP/scr-disc/disc.iso"
-          ls -l "$RUNNER_TEMP/scr-disc"
-
-      - name: Extract the disc
-        run: |
-          cmake -S android/ci/installer -B "$RUNNER_TEMP/scr-installer" -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build "$RUNNER_TEMP/scr-installer" --parallel 2
-          "$RUNNER_TEMP/scr-installer/scr_install" "$RUNNER_TEMP/scr-disc/disc.iso"
-
       # Without generated sources this is the launcher: it installs the runtime and the player picks
-      # their own disc on the device. This is the artifact to test the install flow with.
+      # their own disc on the device. It needs no disc, so it is built and uploaded before the
+      # download starts: a dead or slow link can then never cost this APK, which is the only thing
+      # somebody testing the install flow actually needs.
       # --stacktrace and the conditional log dump: when a Gradle or CMake failure happens on a
       # runner there is no way to reproduce it locally, so the run has to say why by itself.
       - name: Build the launcher APK (installs your own disc image)
@@ -184,6 +170,28 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Download and validate the disc
+        # Reached only with a link (Resolve the disc link already failed otherwise), so this always
+        # runs for the disc. The executable budget keeps a slow link from consuming the whole job
+        # timeout, which is what made this step look hung at over an hour; the script reports
+        # progress and gives up on a stall by itself, and this is the backstop.
+        timeout-minutes: 55
+        run: python3 android/ci/download_disc.py "$RUNNER_TEMP/scr-disc"
+
+      # Printed so the link can be pinned with disc_sha256 next time; a digest is not a secret.
+      - name: Report the digest of the download and the unpacked image
+        if: hashFiles(format('{0}/scr-disc/disc.iso', runner.temp)) != ''
+        run: |
+          sha256sum "$RUNNER_TEMP/scr-disc/disc.iso"
+          ls -l "$RUNNER_TEMP/scr-disc"
+
+      - name: Extract the disc
+        if: hashFiles(format('{0}/scr-disc/disc.iso', runner.temp)) != ''
+        run: |
+          cmake -S android/ci/installer -B "$RUNNER_TEMP/scr-installer" -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/scr-installer" --parallel 2
+          "$RUNNER_TEMP/scr-installer/scr_install" "$RUNNER_TEMP/scr-disc/disc.iso"
+
       # Optional second half: the disc's code, recompiled. Everything below writes game-derived files,
       # so it is refused outside a private repository and cleaned up even when the run fails.
       - name: Refuse game-derived code outside a private repository
@@ -193,7 +201,9 @@ jobs:
           exit 1
 
       - name: Generate the recompiled sources from the disc
-        if: inputs.include_game_code
+        # Only once the disc is actually there: after a failed download the upload steps are skipped
+        # and this must be too, rather than generating from nothing.
+        if: inputs.include_game_code && hashFiles(format('{0}/scr-disc/disc.iso', runner.temp)) != ''
         run: python3 tools/build_generated.py
 
       - name: Build the playable APK (disc code included)

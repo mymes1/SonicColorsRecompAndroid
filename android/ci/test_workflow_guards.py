@@ -9,7 +9,7 @@ import pathlib
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-WORKFLOW = ROOT / '.github/workflows/android-build-apk.yml'
+WORKFLOW = ROOT / '.github/workflows/build.yml'
 
 try:
     import yaml
@@ -82,13 +82,35 @@ class WorkflowGuardTests(unittest.TestCase):
         self.assertNotIn('include_game_code', str(launcher[0].get('if', '')),
                          'the launcher APK must not depend on the disc-derived build')
 
-    def test_the_link_and_the_build_are_separate_steps(self):
-        """A bad link should stop the run before the 20-minute native build, not after it."""
-        runs = [str(s.get('run', '')) for s in self.steps]
-        download = [i for i, r in enumerate(runs) if 'download_disc.py' in r]
-        builds = [i for i, r in enumerate(runs) if 'gradlew' in r or 'gradle ' in r]
-        self.assertTrue(download and builds)
-        self.assertLess(min(download), min(builds), 'the disc must be fetched before the APK is built')
+    def test_the_download_has_its_own_time_limit(self):
+        """An hour with no output in this step is what the run that hung looked like."""
+        download = [s for s in self.steps if 'download_disc.py' in str(s.get('run', ''))]
+        self.assertEqual(len(download), 1)
+        self.assertIn('timeout-minutes', download[0],
+                      'the download needs a limit of its own, not the whole job timeout')
+
+    def test_the_launcher_apk_is_finished_before_the_disc_is_fetched(self):
+        """The launcher APK needs no disc, so a slow or dead link must not be able to cost it."""
+        def index(predicate):
+            for i, step in enumerate(self.steps):
+                if predicate(step):
+                    return i
+            return None
+        upload_launcher = index(lambda s: s.get('with', {}).get('name') == 'sonic-colors-launcher-apk')
+        download = index(lambda s: 'download_disc.py' in str(s.get('run', '')))
+        self.assertIsNotNone(upload_launcher)
+        self.assertIsNotNone(download)
+        self.assertLess(upload_launcher, download,
+                        'the launcher APK must be uploaded before the disc is downloaded')
+
+    def test_disc_work_is_skipped_when_there_is_no_disc(self):
+        """After a failed download nothing may unpack or generate from a disc that is not there."""
+        for step in self.steps:
+            run = str(step.get('run', ''))
+            if 'scr_install' not in run and 'build_generated.py' not in run:
+                continue
+            self.assertIn('hashFiles', str(step.get('if', '')),
+                          f'step "{step.get("name")}" must check the disc exists')
 
     def test_the_link_is_optional_and_falls_back_to_the_secret(self):
         inputs = self.on['workflow_dispatch']['inputs']
