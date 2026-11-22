@@ -84,10 +84,19 @@ that tree is for the desktop build and the host checks above.
 
 `renderer_vk.cpp` generates GLSL per GX state key and compiles it on the device with shaderc; that
 is the only shader compiler the Vulkan renderer has (the desktop renderer uses HLSL and
-`d3dcompiler`). NDK r27 removed shaderc completely — headers and prebuilt libraries — so r26 is the
-last NDK in which the APK can build. The CMake file fails the configure step with that explanation
-if a newer NDK is used, rather than reporting a missing `shaderc/shaderc.h`. Moving to r27+ needs
-shaderc vendored into the build (or GLSL compiled to SPIR-V ahead of time); neither is done yet.
+`d3dcompiler`).
+
+The NDK does not ship shaderc prebuilt. Google's guide (*Vulkan shader compilers on Android*) says to
+build it once per NDK by running `ndk-build` from the shaderc sources, which leaves `libshaderc.a`
+under `sources/third_party/shaderc/libs/<stl>/<abi>/`; the CMake file links that file. So the build
+runs `android/ci/build_shaderc.sh` first — the workflows do it as a step of their own, and a local
+build can run `bash android/ci/build_shaderc.sh` once per NDK install. If the library is absent the
+configure step fails with that instruction instead of a missing-header error far into the compile.
+
+NDK r27 deleted the shaderc sources entirely, so `libshaderc.a` cannot be built there at all. That is
+why the NDK is pinned to r26; the script reports the removal if a newer NDK is installed. Moving to
+r27+ needs shaderc vendored into the build (or the GLSL compiled to SPIR-V ahead of time); neither is
+done yet.
 
 The link check needs stand-ins for the NDK's own headers (`jni.h`, `aaudio/AAudio.h`, `android/*.h`,
 `shaderc/shaderc.h`, `sys/system_properties.h`), which are host-only test fixtures and not checked

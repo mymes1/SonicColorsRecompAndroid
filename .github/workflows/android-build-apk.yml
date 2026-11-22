@@ -79,6 +79,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build cmake g++ python3
           sdkmanager 'platforms;android-35' 'ndk;26.3.11579264' 'cmake;3.22.1'
+      # shaderc is not shipped prebuilt in the NDK; Google's guide is to build it once per NDK with
+      # ndk-build. The Vulkan renderer compiles the GLSL it generates into SPIR-V on the device.
+      - name: Build the NDK shaderc that the renderer needs
+        run: bash android/ci/build_shaderc.sh
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'

@@ -208,24 +208,29 @@ if(SCR_RUNTIME_ARCH_OK)
     # configure step with a clear message instead of the link.
     find_library(SCR_VULKAN_LIB vulkan REQUIRED)
     find_library(SCR_AAUDIO_LIB aaudio REQUIRED)
-    # shaderc: renderer_vk.cpp compiles the GLSL it generates into SPIR-V on the device, and there
-    # is no alternative in the runtime (the desktop renderer goes through d3dcompiler/HLSL).
-    #
-    # The NDK used to ship shaderc prebuilt and this target assumed it did; r27 deleted it, headers
-    # and libraries alike (sources/third_party/shaderc no longer exists), so a plain build fails to
-    # find <shaderc/shaderc.h>. Vendoring is the fix, and until then the configure step says so
-    # plainly instead of failing 200 files later with a missing header.
-    find_library(SCR_SHADERC_LIB shaderc)
+    # shaderc: renderer_vk.cpp compiles the GLSL it generates into SPIR-V on the device, and that
+    # is the renderer's only shader compiler (the desktop renderer goes through HLSL and
+    # d3dcompiler). The NDK does not ship a prebuilt shaderc; Google's instructions are to build it
+    # once per NDK with ndk-build, which puts .a files under sources/third_party/shaderc/libs.
+    # android/ci/build_shaderc.sh does exactly that. NDK r27 deleted the sources entirely, which is
+    # why the NDK is pinned to r26.
+    set(SCR_NDK_SHADERC "${ANDROID_NDK}/sources/third_party/shaderc")
+    find_library(SCR_SHADERC_LIB shaderc PATHS "${SCR_NDK_SHADERC}/libs/${ANDROID_STL}/${ANDROID_ABI}"
+                 NO_DEFAULT_PATH)
     if(NOT SCR_SHADERC_LIB)
-        find_path(SCR_SHADERC_INCLUDE shaderc/shaderc.h)
+        find_library(SCR_SHADERC_LIB shaderc)
+    endif()
+    if(NOT SCR_SHADERC_LIB)
+        find_path(SCR_SHADERC_INCLUDE shaderc/shaderc.h HINTS "${SCR_NDK_SHADERC}/include")
     endif()
     if(NOT SCR_SHADERC_LIB AND NOT SCR_SHADERC_INCLUDE)
         message(FATAL_ERROR
-            "shaderc is not available in this NDK (${ANDROID_NDK}) and nothing provides it.\n"
-            "The Vulkan renderer compiles its generated GLSL with shaderc at run time. NDK r27 "
-            "removed the prebuilt library and its headers. Install an NDK that still has it "
-            "(r26 and older) or add shaderc to the build and pass -DSCR_SHADERC_LIB=... "
-            "-DSCR_SHADERC_INCLUDE=... .")
+            "shaderc is missing for ${ANDROID_ABI}. The Vulkan renderer compiles its generated "
+            "GLSL with shaderc at run time, and the NDK does not ship it prebuilt: build it once "
+            "with\n"
+            "  bash android/ci/build_shaderc.sh\n"
+            "or point -DSCR_SHADERC_LIB=... / -DSCR_SHADERC_INCLUDE=... at an existing build. "
+            "NDK r27 and newer no longer contain the shaderc sources at all.")
     endif()
     if(SCR_SHADERC_LIB)
         target_link_libraries(scr_runtime PRIVATE ${SCR_SHADERC_LIB})
