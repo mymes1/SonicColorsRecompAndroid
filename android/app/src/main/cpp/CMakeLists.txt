@@ -37,6 +37,7 @@ endif()
 add_library(scr_android_probe SHARED
     probe.cpp
     input_bridge.cpp
+    probe_bridge.cpp
     "${ANDROID_DIR}/input.cpp"
     "${ANDROID_DIR}/memory.cpp")
 target_compile_features(scr_android_probe PRIVATE cxx_std_20)
